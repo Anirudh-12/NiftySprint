@@ -1,0 +1,69 @@
+{
+    "version": "auto-py-to-exe-configuration_v1",
+    "pyinstallerOptions": [
+        {
+            "optionDest": "noconfirm",
+            "value": true
+        },
+        {
+            "optionDest": "filenames",
+            "value": "C:/Users/aksha/OneDrive/Documents/3 CANDLE ALL FIX/1min_strategy - Copy/new_main.py"
+        },
+        {
+            "optionDest": "onefile",
+            "value": false
+        },
+        {
+            "optionDest": "console",
+            "value": false
+        },
+        {
+            "optionDest": "icon_file",
+            "value": "C:/Users/aksha/OneDrive/Documents/3 CANDLE ALL FIX/3 CANDLE FIX WEB/_internal/black_red.ico"
+        },
+        {
+            "optionDest": "name",
+            "value": "3rd break"
+        },
+        {
+            "optionDest": "clean_build",
+            "value": false
+        },
+        {
+            "optionDest": "strip",
+            "value": false
+        },
+        {
+            "optionDest": "noupx",
+            "value": false
+        },
+        {
+            "optionDest": "disable_windowed_traceback",
+            "value": false
+        },
+        {
+            "optionDest": "uac_admin",
+            "value": false
+        },
+        {
+            "optionDest": "uac_uiaccess",
+            "value": false
+        },
+        {
+            "optionDest": "argv_emulation",
+            "value": false
+        },
+        {
+            "optionDest": "bootloader_ignore_signals",
+            "value": false
+        },
+        {
+            "optionDest": "runtime_hooks",
+            "value": "C:/Users/aksha/OneDrive/Documents/3 CANDLE ALL FIX/3 CANDLE FIX WEB/runtime.PY"
+        }
+    ],
+    "nonPyinstallerOptions": {
+        "increaseRecursionLimit": true,
+        "manualArguments": ""
+    }
+}

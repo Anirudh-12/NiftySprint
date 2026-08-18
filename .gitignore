@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Logs
+*.log
+exe_debug_log.txt
+
+# Credentials and Keys
+flattradecred.yaml
+session_token*.txt
+*.pem
+*.key
+
+# Temporary Files
+*.zip
+*.csv
+*symbols.txt
+
+# IDEs
+.vscode/
+.idea/
