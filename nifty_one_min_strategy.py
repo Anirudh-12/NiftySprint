@@ -1,19 +1,30 @@
-import threading
-from threading import Lock
-from datetime import datetime, time as dtime
-from collections import deque
-import os
 import asyncio
+import os
+import threading
+from collections import deque
+from datetime import datetime
+from datetime import time as dtime
+from threading import Lock
+
 
 def log_debug(msg):
     try:
         with open("exe_debug_log.txt", "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
+    except Exception as e:
+        print("e", "Unable to log into a file")
+
 
 class NiftyOneMinStrategy:
-    def __init__(self, api, option_handler, instrument_helper, position_manager, bridge, notify_func=None):
+    def __init__(
+        self,
+        api,
+        option_handler,
+        instrument_helper,
+        position_manager,
+        bridge,
+        notify_func=None,
+    ):
         log_debug("NiftyOneMinStrategy initialized!")
         self.api = api
         self.option_handler = option_handler
@@ -45,12 +56,14 @@ class NiftyOneMinStrategy:
         # --- State ---
         self.state = "IDLE"
         self.is_running = False
-        self.premarket_ok = True  # Kept True for UI compatibility; OI filter handles gating
+        self.premarket_ok = (
+            True  # Kept True for UI compatibility; OI filter handles gating
+        )
 
         # --- Day tracking ---
         self.prev_day_close = 0.0
         self.day_high = 0.0
-        self.day_low = float('inf')
+        self.day_low = float("inf")
         self.day_initialized = False
 
         # --- Futures candles ---
@@ -104,9 +117,7 @@ class NiftyOneMinStrategy:
         # --- Asyncio event loop for non-blocking candle replacement ---
         self._asyncio_loop = asyncio.new_event_loop()
         self._asyncio_thread = threading.Thread(
-            target=self._run_asyncio_loop,
-            name="StrategyAsyncioLoop",
-            daemon=True
+            target=self._run_asyncio_loop, name="StrategyAsyncioLoop", daemon=True
         )
         self._asyncio_thread.start()
 
@@ -126,7 +137,9 @@ class NiftyOneMinStrategy:
     def _notify_user_message(self, message, title="Nifty Strategy"):
         if self.bridge:
             try:
-                self.bridge.notify("showNotification", {"title": title, "message": message})
+                self.bridge.notify(
+                    "showNotification", {"title": title, "message": message}
+                )
             except Exception:
                 pass
 
@@ -134,9 +147,25 @@ class NiftyOneMinStrategy:
     # CONFIGURE & START/STOP
     # =========================================================================
 
-    def configure(self, initial_qty, t1_qty, t2_qty, strike_ce, strike_pe,
-                  trig_min, trig_max, break_buffer, t1_pct, t2_pct, t3_mult,
-                  direction_filter="BOTH", pm_limit=100, start_time="09:17", stop_time="10:45", trail_points=12.0):
+    def configure(
+        self,
+        initial_qty,
+        t1_qty,
+        t2_qty,
+        strike_ce,
+        strike_pe,
+        trig_min,
+        trig_max,
+        break_buffer,
+        t1_pct,
+        t2_pct,
+        t3_mult,
+        direction_filter="BOTH",
+        pm_limit=100,
+        start_time="09:17",
+        stop_time="10:45",
+        trail_points=12.0,
+    ):
         self.initial_qty = int(initial_qty)
         self.t1_qty = int(t1_qty)
         self.t2_qty = int(t2_qty)
@@ -149,7 +178,9 @@ class NiftyOneMinStrategy:
 
         new_strike_pe = int(strike_pe) if strike_pe else 0
         self.strike_pe = new_strike_pe
-        self.direction_filter = str(direction_filter).upper() if direction_filter else "BOTH"
+        self.direction_filter = (
+            str(direction_filter).upper() if direction_filter else "BOTH"
+        )
         self.trig_min = int(trig_min)
         self.trig_max = int(trig_max)
         self.break_buffer = float(break_buffer)
@@ -160,14 +191,18 @@ class NiftyOneMinStrategy:
 
         if self.is_running:
             strike_changed = False
-            if new_strike_ce > 0 and new_strike_ce != getattr(self, '_last_configured_strike_ce', 0):
+            if new_strike_ce > 0 and new_strike_ce != getattr(
+                self, "_last_configured_strike_ce", 0
+            ):
                 with self.lock:
                     self.option_candles["CE"].clear()
                     self.running_opt_candle["CE"] = None
                     self.last_opt_candle_ts["CE"] = 0
                 self._fetch_historical_option_candles("CE", new_strike_ce)
                 strike_changed = True
-            if new_strike_pe > 0 and new_strike_pe != getattr(self, '_last_configured_strike_pe', 0):
+            if new_strike_pe > 0 and new_strike_pe != getattr(
+                self, "_last_configured_strike_pe", 0
+            ):
                 with self.lock:
                     self.option_candles["PE"].clear()
                     self.running_opt_candle["PE"] = None
@@ -213,7 +248,7 @@ class NiftyOneMinStrategy:
             self.day_initialized = False
             self.prev_day_close = 0.0
             self.day_high = 0.0
-            self.day_low = float('inf')
+            self.day_low = float("inf")
 
             now_time = datetime.now().time()
             start_t = self._parse_time(self.start_time_str) or dtime(9, 17)
@@ -221,7 +256,9 @@ class NiftyOneMinStrategy:
 
             if now_time < start_t:
                 self.state = "WAITING_TIME"
-                print(f"[TIME] Current time {now_time.strftime('%H:%M:%S')} is before start time {self.start_time_str}. Waiting...")
+                print(
+                    f"[TIME] Current time {now_time.strftime('%H:%M:%S')} is before start time {self.start_time_str}. Waiting..."
+                )
             elif now_time >= stop_t:
                 self.state = "IDLE"
                 self.is_running = False
@@ -309,14 +346,18 @@ class NiftyOneMinStrategy:
                         self._update_opt_candle(pe_ltp, now, "PE")
 
                 if self.state in ("IN_TRADE", "TRAILING"):
-                    trade_ltp = self.option_handler.get_option_ltp(self.active_opt_strike, self.active_opt_type)
+                    trade_ltp = self.option_handler.get_option_ltp(
+                        self.active_opt_strike, self.active_opt_type
+                    )
                     if trade_ltp > 0:
                         self._update_active_trade_candle(trade_ltp, now)
                         if trade_ltp > self.option_high_since_entry:
                             self.option_high_since_entry = trade_ltp
                     self.opt_ltp = trade_ltp
                 else:
-                    self.opt_ltp = self.option_handler.get_option_ltp(self.active_opt_strike, self.active_opt_type)
+                    self.opt_ltp = self.option_handler.get_option_ltp(
+                        self.active_opt_strike, self.active_opt_type
+                    )
             except Exception:
                 pass
 
@@ -345,22 +386,31 @@ class NiftyOneMinStrategy:
 
         if now_time < start_t:
             if self.state != "WAITING_TIME":
-                print(f"[TIME] Current time {now_time.strftime('%H:%M:%S')} is before start time {self.start_time_str}. Waiting...")
+                print(
+                    f"[TIME] Current time {now_time.strftime('%H:%M:%S')} is before start time {self.start_time_str}. Waiting..."
+                )
                 self.state = "WAITING_TIME"
                 self._notify()
             return True
 
         if self.state == "WAITING_TIME" and now_time >= start_t and now_time < stop_t:
-            print(f"[TIME] Start time {self.start_time_str} reached. Transitioning to SCANNING.")
+            print(
+                f"[TIME] Start time {self.start_time_str} reached. Transitioning to SCANNING."
+            )
             self.state = "SCANNING"
             self._notify()
             msg = f"Nifty Strategy started scanning at {now_time.strftime('%H:%M:%S')} (Start time: {self.start_time_str})."
             self._notify_user_message(msg)
 
         if now_time >= stop_t:
-            has_position = self.remaining_qty > 0 and self.state in ("IN_TRADE", "TRAILING")
+            has_position = self.remaining_qty > 0 and self.state in (
+                "IN_TRADE",
+                "TRAILING",
+            )
             if not has_position:
-                print(f"[TIME] Stop time {self.stop_time_str} reached. Stopping strategy.")
+                print(
+                    f"[TIME] Stop time {self.stop_time_str} reached. Stopping strategy."
+                )
                 self.stop()
                 msg = f"Nifty Strategy stopped at {now_time.strftime('%H:%M:%S')} as stop time {self.stop_time_str} was reached and no active positions exist."
                 self._notify_user_message(msg)
@@ -392,18 +442,20 @@ class NiftyOneMinStrategy:
     def _fetch_prev_close(self):
         try:
             nifty_token = self.option_handler.index_tokens.get("NIFTY", {}).get("token")
-            exchange = self.option_handler.index_tokens.get("NIFTY", {}).get("exchange", "NFO")
+            exchange = self.option_handler.index_tokens.get("NIFTY", {}).get(
+                "exchange", "NFO"
+            )
             if not nifty_token:
                 return
             quotes = self.api.get_quotes(exchange, nifty_token)
             if quotes:
-                prev_close = quotes.get('c') or quotes.get('pc') or quotes.get('lp', 0)
+                prev_close = quotes.get("c") or quotes.get("pc") or quotes.get("lp", 0)
                 self.prev_day_close = float(prev_close or 0)
-                current_lp = float(quotes.get('lp', 0) or 0)
+                current_lp = float(quotes.get("lp", 0) or 0)
                 if current_lp > 0 and self.index_ltp == 0.0:
                     self.index_ltp = current_lp
-                day_high = float(quotes.get('h', 0) or 0)
-                day_low = float(quotes.get('l', 0) or 0)
+                day_high = float(quotes.get("h", 0) or 0)
+                day_low = float(quotes.get("l", 0) or 0)
                 if day_high > 0 and day_low > 0:
                     self.day_high = day_high
                     self.day_low = day_low
@@ -414,21 +466,25 @@ class NiftyOneMinStrategy:
     def _fetch_and_replay_historical_candles(self):
         try:
             nifty_token = self.option_handler.index_tokens.get("NIFTY", {}).get("token")
-            exchange = self.option_handler.index_tokens.get("NIFTY", {}).get("exchange", "NFO")
+            exchange = self.option_handler.index_tokens.get("NIFTY", {}).get(
+                "exchange", "NFO"
+            )
             if not nifty_token:
                 return
 
             now = datetime.now()
             start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
             snapped_minute = now.minute
-            current_block_ts = int(now.replace(minute=snapped_minute, second=0, microsecond=0).timestamp())
+            current_block_ts = int(
+                now.replace(minute=snapped_minute, second=0, microsecond=0).timestamp()
+            )
 
             candles = self.api.get_historical_data(
                 exchange=exchange,
                 token=nifty_token,
                 start_time=start_dt.timestamp(),
                 end_time=now.timestamp(),
-                interval=1
+                interval=1,
             )
             if not candles:
                 return
@@ -460,7 +516,9 @@ class NiftyOneMinStrategy:
                 self._fetch_historical_option_candles("PE", self.strike_pe)
 
         except Exception as e:
-            log_debug(f"[API_DEBUG] Exception in _fetch_and_replay_historical_candles: {e}")
+            log_debug(
+                f"[API_DEBUG] Exception in _fetch_and_replay_historical_candles: {e}"
+            )
 
     def _fetch_historical_option_candles(self, opt_type, strike):
         if strike <= 0:
@@ -475,19 +533,24 @@ class NiftyOneMinStrategy:
 
         def fetch_task():
             import time
+
             time.sleep(0.5)
             try:
                 now = datetime.now()
                 start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
                 snapped_minute = now.minute
-                current_block_ts = int(now.replace(minute=snapped_minute, second=0, microsecond=0).timestamp())
+                current_block_ts = int(
+                    now.replace(
+                        minute=snapped_minute, second=0, microsecond=0
+                    ).timestamp()
+                )
 
                 candles = self.api.get_historical_data(
                     exchange=exchange,
                     token=token,
                     start_time=start_dt.timestamp(),
                     end_time=now.timestamp(),
-                    interval=1
+                    interval=1,
                 )
                 if not candles:
                     return
@@ -503,26 +566,35 @@ class NiftyOneMinStrategy:
                     lo = c.low
                     cl = c.close
 
-                    valid_candles.append((c_ts, {
-                        "time": c_ts,
-                        "open": c.open,
-                        "high": hi,
-                        "low": lo,
-                        "close": cl,
-                        "size": hi - lo,
-                    }))
+                    valid_candles.append(
+                        (
+                            c_ts,
+                            {
+                                "time": c_ts,
+                                "open": c.open,
+                                "high": hi,
+                                "low": lo,
+                                "close": cl,
+                                "size": hi - lo,
+                            },
+                        )
+                    )
 
                 new_candles = dict(valid_candles)
 
                 with self.lock:
-                    current_strike = self.strike_ce if opt_type == "CE" else self.strike_pe
+                    current_strike = (
+                        self.strike_ce if opt_type == "CE" else self.strike_pe
+                    )
                     if strike != current_strike:
                         return
                     self.option_candles[opt_type].clear()
                     self.option_candles[opt_type].update(new_candles)
                 self._notify()
             except Exception as e:
-                log_debug(f"Error fetching historical options candles for {opt_type} {strike}: {e}")
+                log_debug(
+                    f"Error fetching historical options candles for {opt_type} {strike}: {e}"
+                )
 
         try:
             threading.Thread(target=fetch_task, daemon=True).start()
@@ -544,20 +616,26 @@ class NiftyOneMinStrategy:
     # CANDLE BUILDERS
     # =========================================================================
 
-    def _async_replace_candle(self, exchange, token, target_ts, candle_dict, label="futures"):
+    def _async_replace_candle(
+        self, exchange, token, target_ts, candle_dict, label="futures"
+    ):
         if not token or not exchange:
             return
         try:
             asyncio.run_coroutine_threadsafe(
-                self._async_replace_candle_coro(exchange, token, target_ts, candle_dict, label),
-                self._asyncio_loop
+                self._async_replace_candle_coro(
+                    exchange, token, target_ts, candle_dict, label
+                ),
+                self._asyncio_loop,
             )
         except Exception as e:
             log_debug(f"[ASYNC_REPLACE] Failed to schedule async candle replace: {e}")
 
-    async def _async_replace_candle_coro(self, exchange, token, target_ts, candle_dict, label="futures"):
+    async def _async_replace_candle_coro(
+        self, exchange, token, target_ts, candle_dict, label="futures"
+    ):
         max_retries = 8
-        ts_str = datetime.fromtimestamp(target_ts).strftime('%H:%M:%S')
+        ts_str = datetime.fromtimestamp(target_ts).strftime("%H:%M:%S")
         for attempt in range(max_retries):
             await asyncio.sleep(0.2)
             try:
@@ -568,7 +646,7 @@ class NiftyOneMinStrategy:
                     token=token,
                     start_time=target_ts,
                     end_time=now.timestamp(),
-                    interval=1
+                    interval=1,
                 )
                 if not candles:
                     continue
@@ -590,7 +668,7 @@ class NiftyOneMinStrategy:
                                 self.option_candles["CE"][target_ts] = candle_dict
                             elif label == "PE Option":
                                 self.option_candles["PE"][target_ts] = candle_dict
-                        msg = f"[ASYNC_REPLACE] SUCCESS: Replaced {label} candle ({ts_str}) -> O:{op}, H:{hi}, L:{lo}, C:{cl} (Attempt {attempt+1})"
+                        msg = f"[ASYNC_REPLACE] SUCCESS: Replaced {label} candle ({ts_str}) -> O:{op}, H:{hi}, L:{lo}, C:{cl} (Attempt {attempt + 1})"
                         print(msg)
                         log_debug(msg)
                         self._notify()
@@ -613,7 +691,14 @@ class NiftyOneMinStrategy:
     def _update_fut_candle(self, ltp, now):
         ts = self._snap_1min(now)
         if self.running_fut_candle is None:
-            self.running_fut_candle = {"time": ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp, "vol": 0}
+            self.running_fut_candle = {
+                "time": ts,
+                "open": ltp,
+                "high": ltp,
+                "low": ltp,
+                "close": ltp,
+                "vol": 0,
+            }
             self.last_fut_candle_ts = ts
         elif ts > self.last_fut_candle_ts:
             completed = dict(self.running_fut_candle)
@@ -621,11 +706,26 @@ class NiftyOneMinStrategy:
             self.futures_candles.append(completed)
 
             nifty_token = self.option_handler.index_tokens.get("NIFTY", {}).get("token")
-            exchange = self.option_handler.index_tokens.get("NIFTY", {}).get("exchange", "NFO")
+            exchange = self.option_handler.index_tokens.get("NIFTY", {}).get(
+                "exchange", "NFO"
+            )
             if nifty_token and exchange:
-                self._async_replace_candle(exchange, nifty_token, self.last_fut_candle_ts, completed, label="futures")
+                self._async_replace_candle(
+                    exchange,
+                    nifty_token,
+                    self.last_fut_candle_ts,
+                    completed,
+                    label="futures",
+                )
 
-            self.running_fut_candle = {"time": ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp, "vol": 0}
+            self.running_fut_candle = {
+                "time": ts,
+                "open": ltp,
+                "high": ltp,
+                "low": ltp,
+                "close": ltp,
+                "vol": 0,
+            }
             self.last_fut_candle_ts = ts
             self._on_candle_close(completed, "futures")
         else:
@@ -639,7 +739,13 @@ class NiftyOneMinStrategy:
             return
         ts = self._snap_1min(now)
         if self.running_opt_candle[opt_type] is None:
-            self.running_opt_candle[opt_type] = {"time": ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp}
+            self.running_opt_candle[opt_type] = {
+                "time": ts,
+                "open": ltp,
+                "high": ltp,
+                "low": ltp,
+                "close": ltp,
+            }
             self.last_opt_candle_ts[opt_type] = ts
         elif ts > self.last_opt_candle_ts[opt_type]:
             completed = dict(self.running_opt_candle[opt_type])
@@ -647,17 +753,25 @@ class NiftyOneMinStrategy:
             self.option_candles[opt_type][self.last_opt_candle_ts[opt_type]] = completed
             strike = self.strike_ce if opt_type == "CE" else self.strike_pe
             if strike > 0:
-                token_info = self.option_handler._get_option_token("NIFTY", opt_type, strike)
+                token_info = self.option_handler._get_option_token(
+                    "NIFTY", opt_type, strike
+                )
                 if token_info:
                     self._async_replace_candle(
                         token_info.get("exchange", "NFO"),
                         token_info.get("token"),
                         self.last_opt_candle_ts[opt_type],
                         completed,
-                        label=f"{opt_type} Option"
+                        label=f"{opt_type} Option",
                     )
             self._on_candle_close(completed, opt_type)
-            self.running_opt_candle[opt_type] = {"time": ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp}
+            self.running_opt_candle[opt_type] = {
+                "time": ts,
+                "open": ltp,
+                "high": ltp,
+                "low": ltp,
+                "close": ltp,
+            }
             self.last_opt_candle_ts[opt_type] = ts
         else:
             c = self.running_opt_candle[opt_type]
@@ -668,17 +782,37 @@ class NiftyOneMinStrategy:
     def _update_active_trade_candle(self, ltp, now):
         ts = self._snap_1min(now)
         if self.running_active_trade_candle is None:
-            self.running_active_trade_candle = {"time": ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp}
+            self.running_active_trade_candle = {
+                "time": ts,
+                "open": ltp,
+                "high": ltp,
+                "low": ltp,
+                "close": ltp,
+            }
             self.last_active_trade_candle_ts = ts
         elif ts > self.last_active_trade_candle_ts:
             completed = dict(self.running_active_trade_candle)
             completed["size"] = completed["high"] - completed["low"]
             self.active_trade_candles[self.last_active_trade_candle_ts] = completed
             if self.active_opt_strike > 0 and self.active_opt_type:
-                token_info = self.option_handler._get_option_token("NIFTY", self.active_opt_type, self.active_opt_strike)
+                token_info = self.option_handler._get_option_token(
+                    "NIFTY", self.active_opt_type, self.active_opt_strike
+                )
                 if token_info:
-                    self._async_replace_candle(token_info.get("exchange", "NFO"), token_info.get("token"), self.last_active_trade_candle_ts, completed, label=f"{self.active_opt_type} Option")
-            self.running_active_trade_candle = {"time": ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp}
+                    self._async_replace_candle(
+                        token_info.get("exchange", "NFO"),
+                        token_info.get("token"),
+                        self.last_active_trade_candle_ts,
+                        completed,
+                        label=f"{self.active_opt_type} Option",
+                    )
+            self.running_active_trade_candle = {
+                "time": ts,
+                "open": ltp,
+                "high": ltp,
+                "low": ltp,
+                "close": ltp,
+            }
             self.last_active_trade_candle_ts = ts
         else:
             c = self.running_active_trade_candle
@@ -693,9 +827,11 @@ class NiftyOneMinStrategy:
     def _on_candle_close(self, candle, candle_type):
         if candle_type == "futures":
             try:
-                ts_str = datetime.fromtimestamp(candle["time"]).strftime('%H:%M:%S')
+                ts_str = datetime.fromtimestamp(candle["time"]).strftime("%H:%M:%S")
                 print(f"\n[SCAN] --- Future Candle Closed @ {ts_str} ---")
-                print(f"[SCAN] O:{candle['open']} H:{candle['high']} L:{candle['low']} C:{candle['close']} Size:{candle.get('size', 0):.2f}")
+                print(
+                    f"[SCAN] O:{candle['open']} H:{candle['high']} L:{candle['low']} C:{candle['close']} Size:{candle.get('size', 0):.2f}"
+                )
             except Exception:
                 pass
 
@@ -708,11 +844,15 @@ class NiftyOneMinStrategy:
                 ref_high = ref_opt["high"]
                 if candle["close"] < ref_high:
                     if candle_type == "CE" and self.ce_disabled:
-                        print(f"[RE-ACTIVATE] CE candle closed at {candle['close']} < Ref High {ref_high}. Re-activating CE setup.")
+                        print(
+                            f"[RE-ACTIVATE] CE candle closed at {candle['close']} < Ref High {ref_high}. Re-activating CE setup."
+                        )
                         self.ce_disabled = False
                         self.ce_scan_active = False
                     elif candle_type == "PE" and self.pe_disabled:
-                        print(f"[RE-ACTIVATE] PE candle closed at {candle['close']} < Ref High {ref_high}. Re-activating PE setup.")
+                        print(
+                            f"[RE-ACTIVATE] PE candle closed at {candle['close']} < Ref High {ref_high}. Re-activating PE setup."
+                        )
                         self.pe_disabled = False
                         self.pe_scan_active = False
 
@@ -727,8 +867,12 @@ class NiftyOneMinStrategy:
             if c_time == start_t:
                 self.reference_candle_fut = fut_candle
                 self.ref_candle_ts = fut_candle["time"]
-                print(f"[REFERENCE] Start time candle ({self.start_time_str}) set as REFERENCE candle!")
-                print(f"[REFERENCE] Futures High: {fut_candle['high']}, Low: {fut_candle['low']}")
+                print(
+                    f"[REFERENCE] Start time candle ({self.start_time_str}) set as REFERENCE candle!"
+                )
+                print(
+                    f"[REFERENCE] Futures High: {fut_candle['high']}, Low: {fut_candle['low']}"
+                )
                 self._notify()
         except Exception:
             pass
@@ -775,7 +919,9 @@ class NiftyOneMinStrategy:
 
                     if not getattr(self, "ce_scan_active", False):
                         if ce_ltp > threshold:
-                            print(f"[FILTER] CE setup already triggered! Discarding setup. CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}")
+                            print(
+                                f"[FILTER] CE setup already triggered! Discarding setup. CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}"
+                            )
                             self.ce_disabled = True
                             return
                         else:
@@ -783,9 +929,13 @@ class NiftyOneMinStrategy:
 
                     prev_ltp = self.prev_opt_ltp.get("CE", 0.0)
                     if ce_ltp > threshold and prev_ltp <= threshold:
-                        print(f"[ENTRY] LONG CE option crossover breakout! CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})")
+                        print(
+                            f"[ENTRY] LONG CE option crossover breakout! CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})"
+                        )
                         if in_trade:
-                            print("[ENTRY] Opposite direction CE breakout while in PE trade! Flipping position.")
+                            print(
+                                "[ENTRY] Opposite direction CE breakout while in PE trade! Flipping position."
+                            )
                             self._exit_all("FLIP_TO_NEW_SETUP")
                         self.active_opt_strike = self.strike_ce
                         self.active_opt_type = "CE"
@@ -804,7 +954,9 @@ class NiftyOneMinStrategy:
 
                     if not getattr(self, "pe_scan_active", False):
                         if pe_ltp > threshold:
-                            print(f"[FILTER] PE setup already triggered! Discarding setup. PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}")
+                            print(
+                                f"[FILTER] PE setup already triggered! Discarding setup. PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}"
+                            )
                             self.pe_disabled = True
                             return
                         else:
@@ -812,9 +964,13 @@ class NiftyOneMinStrategy:
 
                     prev_ltp = self.prev_opt_ltp.get("PE", 0.0)
                     if pe_ltp > threshold and prev_ltp <= threshold:
-                        print(f"[ENTRY] SHORT PE option crossover breakout! PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})")
+                        print(
+                            f"[ENTRY] SHORT PE option crossover breakout! PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})"
+                        )
                         if in_trade:
-                            print("[ENTRY] Opposite direction PE breakout while in CE trade! Flipping position.")
+                            print(
+                                "[ENTRY] Opposite direction PE breakout while in CE trade! Flipping position."
+                            )
                             self._exit_all("FLIP_TO_NEW_SETUP")
                         self.active_opt_strike = self.strike_pe
                         self.active_opt_type = "PE"
@@ -863,7 +1019,11 @@ class NiftyOneMinStrategy:
         self.direction = opt_type
 
         self.active_trade_candles = dict(self.option_candles[opt_type])
-        self.running_active_trade_candle = dict(self.running_opt_candle[opt_type]) if self.running_opt_candle[opt_type] else None
+        self.running_active_trade_candle = (
+            dict(self.running_opt_candle[opt_type])
+            if self.running_opt_candle[opt_type]
+            else None
+        )
         self.last_active_trade_candle_ts = self.last_opt_candle_ts[opt_type]
 
         self.state = "IN_TRADE"
@@ -873,10 +1033,16 @@ class NiftyOneMinStrategy:
         symbol = self.option_handler.get_option_symbol(strike, opt_type)
         if symbol:
             try:
-                print(f"[ENTRY] Placing BUY order for {self.initial_qty} qty of {symbol} at Market.")
+                print(
+                    f"[ENTRY] Placing BUY order for {self.initial_qty} qty of {symbol} at Market."
+                )
                 self.position_manager.place_order(
-                    tradingsymbol=symbol, quantity=self.initial_qty,
-                    buy_or_sell='B', exchange="NFO", product_type='M', price_type='MKT'
+                    tradingsymbol=symbol,
+                    quantity=self.initial_qty,
+                    buy_or_sell="B",
+                    exchange="NFO",
+                    product_type="M",
+                    price_type="MKT",
                 )
             except Exception as e:
                 print(f"[ERROR] Failed to place entry order: {e}")
@@ -907,7 +1073,9 @@ class NiftyOneMinStrategy:
             if opt_ltp >= self.t1_target:
                 self._exit_partial(self.t1_qty, "T1")
                 self.t1_hit = True
-                self.current_sl = max(self.current_sl, self.option_high_since_entry - self.trail_points)
+                self.current_sl = max(
+                    self.current_sl, self.option_high_since_entry - self.trail_points
+                )
                 if self.remaining_qty <= 0:
                     exited_dir = self.direction
                     self._reset_trade_state()
@@ -916,7 +1084,9 @@ class NiftyOneMinStrategy:
                         self.ce_disabled = True
                     elif exited_dir == "PE":
                         self.pe_disabled = True
-                    print(f"[EXIT] Zero quantity remaining after T1 exit. Disabling {exited_dir} until opposite trade is taken.")
+                    print(
+                        f"[EXIT] Zero quantity remaining after T1 exit. Disabling {exited_dir} until opposite trade is taken."
+                    )
                 self._notify()
                 return
 
@@ -925,7 +1095,9 @@ class NiftyOneMinStrategy:
                 self._exit_partial(self.t2_qty, "T2")
                 self.t2_hit = True
                 self.state = "TRAILING"
-                self.trailing_sl = max(self.current_sl, self.option_high_since_entry - self.trail_points)
+                self.trailing_sl = max(
+                    self.current_sl, self.option_high_since_entry - self.trail_points
+                )
                 self.current_sl = self.trailing_sl
                 if self.remaining_qty <= 0:
                     exited_dir = self.direction
@@ -935,7 +1107,9 @@ class NiftyOneMinStrategy:
                         self.ce_disabled = True
                     elif exited_dir == "PE":
                         self.pe_disabled = True
-                    print(f"[EXIT] Zero quantity remaining after T2 exit. Disabling {exited_dir} until opposite trade is taken.")
+                    print(
+                        f"[EXIT] Zero quantity remaining after T2 exit. Disabling {exited_dir} until opposite trade is taken."
+                    )
                 self._notify()
                 return
 
@@ -962,14 +1136,21 @@ class NiftyOneMinStrategy:
         if symbol:
             try:
                 self.position_manager.place_order(
-                    tradingsymbol=symbol, quantity=qty,
-                    buy_or_sell='S', exchange="NFO", product_type='M', price_type='MKT')
+                    tradingsymbol=symbol,
+                    quantity=qty,
+                    buy_or_sell="S",
+                    exchange="NFO",
+                    product_type="M",
+                    price_type="MKT",
+                )
             except Exception:
                 pass
         self.remaining_qty -= qty
 
     def _exit_all(self, reason):
-        print(f"[EXIT] Executing ALL remaining qty ({self.remaining_qty}) for reason: {reason}")
+        print(
+            f"[EXIT] Executing ALL remaining qty ({self.remaining_qty}) for reason: {reason}"
+        )
         exited_dir = self.direction
         self._exit_partial(self.remaining_qty, reason)
         self._reset_trade_state()
@@ -980,7 +1161,9 @@ class NiftyOneMinStrategy:
                 self.ce_disabled = True
             elif exited_dir == "PE":
                 self.pe_disabled = True
-            print(f"[FILTER] Direction {exited_dir} disabled after {reason} exit until opposite direction trade is taken.")
+            print(
+                f"[FILTER] Direction {exited_dir} disabled after {reason} exit until opposite direction trade is taken."
+            )
 
         self._notify()
 
@@ -1012,8 +1195,12 @@ class NiftyOneMinStrategy:
 
     def _notify(self):
         try:
-            is_long = self._is_direction_allowed("CE") if self.reference_candle_fut else False
-            is_short = self._is_direction_allowed("PE") if self.reference_candle_fut else False
+            is_long = (
+                self._is_direction_allowed("CE") if self.reference_candle_fut else False
+            )
+            is_short = (
+                self._is_direction_allowed("PE") if self.reference_candle_fut else False
+            )
 
             if is_long and is_short:
                 setup_signal = "L/S"
@@ -1036,7 +1223,9 @@ class NiftyOneMinStrategy:
                 c = self._get_option_reference_candle(opt_type)
                 if c:
                     try:
-                        ts_str = datetime.fromtimestamp(c.get("time", 0)).strftime("%H:%M")
+                        ts_str = datetime.fromtimestamp(c.get("time", 0)).strftime(
+                            "%H:%M"
+                        )
                     except Exception:
                         ts_str = ""
                     return {
@@ -1054,7 +1243,10 @@ class NiftyOneMinStrategy:
             if self.prev_day_close > 0:
                 app_high, app_low = self.day_high, self.day_low
                 if app_high is not None and app_low is not None and app_high > 0:
-                    display_move = max(abs(app_high - self.prev_day_close), abs(app_low - self.prev_day_close))
+                    display_move = max(
+                        abs(app_high - self.prev_day_close),
+                        abs(app_low - self.prev_day_close),
+                    )
                     display_range = app_high - app_low
 
             data = {
@@ -1064,8 +1256,12 @@ class NiftyOneMinStrategy:
                     "open_time": tc_ts,
                     "high": tc.get("high", 0) if tc else 0,
                     "low": tc.get("low", 0) if tc else 0,
-                    "size": round((tc.get("high", 0) - tc.get("low", 0)), 2) if tc else 0
-                } if tc else {},
+                    "size": round((tc.get("high", 0) - tc.get("low", 0)), 2)
+                    if tc
+                    else 0,
+                }
+                if tc
+                else {},
                 "ce_candle": ce_candle_data,
                 "pe_candle": pe_candle_data,
                 "entry_price_opt": self.entry_price_opt,

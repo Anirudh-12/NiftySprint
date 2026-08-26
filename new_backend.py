@@ -15,37 +15,36 @@ try:
 except ImportError:
     pass
 
-from bi_rpc import RpcHandler
-import yaml
-from datetime import datetime
-import traceback
+# Setup Logging
+# logging.basicConfig(level=logging.CRITICAL,
+#                     format='%(asctime)s %(levelname)s %(message)s')
+# ... (skip to notification function)
+import logging
 import sys
 
 # import math
 import time
-from threading import Thread
+import traceback
+from datetime import datetime
 from multiprocessing import freeze_support
+from threading import Thread
 
-# from NorenRestApiPy.NorenApi import NorenApi as NorenDataApi
-from FLATTRADE import FlatTradeAuth
-from check_for_empty_port import check_for_empty_port
-from option_chain_handler import OptionChainHandler
-from Get_Instruments import InstrumentHelper
-from nifty_one_min_strategy import NiftyOneMinStrategy
-from position_manager import PositionManager
-
-from flattrade_broker import FlatTradeBroker
-from models import OrderUpdate
-# Setup Logging
-# logging.basicConfig(level=logging.CRITICAL,
-#                     format='%(asctime)s %(levelname)s %(message)s')
-
-# ... (skip to notification function)
-import logging
+import keyring
+import yaml
 
 # logging.disable(logging.CRITICAL)
 from auth import generate_key
+from bi_rpc import RpcHandler
+from check_for_empty_port import check_for_empty_port
 
+# from NorenRestApiPy.NorenApi import NorenApi as NorenDataApi
+from FLATTRADE import FlatTradeAuth
+from flattrade_broker import FlatTradeBroker
+from Get_Instruments import InstrumentHelper
+from models import OrderUpdate
+from nifty_one_min_strategy import NiftyOneMinStrategy
+from option_chain_handler import OptionChainHandler
+from position_manager import PositionManager
 
 # Global State
 api = None
@@ -55,7 +54,7 @@ nifty_strategy = None
 trading_active = False
 config_path = "flattradecred.yaml"
 config_path2 = "flattradecred2.yaml"
-config_path_data = "flattradecred_data.yaml"
+config_path_data = "flattradecred.yaml"
 token_file = "session_token3.txt"
 token_file2 = "session_token2.txt"
 token_file_data = "session_token_data.txt"
@@ -86,19 +85,14 @@ def format_expiry_date(expiry_date):
 
 
 def save_credentials(credentials):
-    """Save credentials to YAML file with the correct key format"""
-    with open(config_path, "w") as f:
-        yaml.dump(
-            {
-                "user_id": credentials["user_id"],
-                "password": credentials["password"],
-                "factor2": credentials["factor2"],
-                "api_key": credentials["api_key"],
-                "api_secret": credentials["api_secret"],
-            },
-            f,
-        )
-    pass
+    """Save credentials to keyring"""
+    keyring.set_password("FlattradeApp", "user_id", credentials.get("user_id", ""))
+    keyring.set_password("FlattradeApp", "password", credentials.get("password", ""))
+    keyring.set_password("FlattradeApp", "factor2", credentials.get("factor2", ""))
+    keyring.set_password("FlattradeApp", "api_key", credentials.get("api_key", ""))
+    keyring.set_password(
+        "FlattradeApp", "api_secret", credentials.get("api_secret", "")
+    )
 
 
 def convert_credential_format():
@@ -109,7 +103,6 @@ def convert_credential_format():
                 cred = yaml.load(f, Loader=yaml.FullLoader)
 
             if "user" in cred and "user_id" not in cred:
-                pass
                 with open(config_path, "w") as f:
                     yaml.dump(
                         {
@@ -121,9 +114,8 @@ def convert_credential_format():
                         },
                         f,
                     )
-                pass
         except Exception as e:
-            pass
+            print(f"Error in convert_credential_format: {e}")
 
 
 def update_ui_connection_status(success=False):
@@ -136,15 +128,10 @@ def fetch_and_update_frontend_positions():
     """Fetches positions with calculated PNL and pushes them to the frontend."""
     try:
         positions_data = get_positions_internal()  # Call the internal version
-        if positions_data is not None:
-            pass
-            if bridge:
-                bridge.notify("updatePositions", positions_data)
-        else:
-            pass
-    except Exception as e:
-        import traceback
+        if positions_data is not None and bridge:
+            bridge.notify("updatePositions", positions_data)
 
+    except Exception as e:
         traceback.print_exc()
         print(f"Error in fetch_and_update_frontend_positions: {e}")
 
@@ -275,7 +262,12 @@ def backend_main(rpc_address):
             if credentials:
                 save_credentials(credentials)
             else:
-                convert_credential_format()
+                # convert_credential_format() is no longer needed with keyring
+                pass
+
+            # If connect_to_api is called with no creds (e.g. auto_connect), grab from keyring
+            if not credentials:
+                credentials = get_saved_credentials()
 
             logging.info(
                 f"Initializing FlatTradeAuth with config={config_path}, token_file={token_file}"
@@ -288,13 +280,15 @@ def backend_main(rpc_address):
             # api = NorenApi(host="https://piconnect.flattrade.in/PiConnectAPI", websocket="wss://piconnect.flattrade.in/PiConnectWSAPI/")
             # api.set_session(auth.user_id,auth.password,token)
             # api.login(auth.user_id, auth.password, auth.get_totp(), f"{auth.user_id}_U", api_secret=auth.api_key, imei="abc1234")
-            auth2 = FlatTradeAuth(config_path_data, token_file_data)
+            auth2 = FlatTradeAuth(
+                config_path_data, token_file_data, credentials=credentials
+            )
             appkey = generate_key(auth2.user_id)
             credentials = {
                 "user_id": auth2.user_id,
                 "password": auth2.password,
                 "totp_key": auth2.totp_key,
-                "appkey": appkey
+                "appkey": appkey,
             }
             api = FlatTradeBroker()
             if not api.login(credentials):
@@ -392,17 +386,16 @@ def backend_main(rpc_address):
     @bridge.expose
     def get_saved_credentials():
         try:
-            if os.path.exists(config_path):
-                with open(config_path) as f:
-                    cred = yaml.load(f, Loader=yaml.FullLoader)
-                    return {
-                        "user_id": cred.get("user_id", cred.get("user", "")),
-                        "password": cred.get("password", cred.get("pwd", "")),
-                        "factor2": cred.get("factor2", ""),
-                        "api_key": cred.get("apikey", cred.get("api_key", "")),
-                        "api_secret": cred.get("apisecret", cred.get("api_secret", "")),
-                    }
-            return {}
+            user_id = keyring.get_password("FlattradeApp", "user_id")
+            if not user_id:
+                return {}
+            return {
+                "user_id": user_id,
+                "password": keyring.get_password("FlattradeApp", "password") or "",
+                "factor2": keyring.get_password("FlattradeApp", "factor2") or "",
+                "api_key": keyring.get_password("FlattradeApp", "api_key") or "",
+                "api_secret": keyring.get_password("FlattradeApp", "api_secret") or "",
+            }
         except Exception as e:
             return {}
 
@@ -451,7 +444,6 @@ def backend_main(rpc_address):
         try:
             ui_selected_ce_strike = int(ce_strike)
             ui_selected_pe_strike = int(pe_strike)
-            pass
 
             # Immediately notify UI with new strike LTPs
             if option_handler:
@@ -471,15 +463,12 @@ def backend_main(rpc_address):
         if not option_handler:
             return {"success": False, "message": "Option handler not initialized"}
         try:
-            pass
             option_handler.set_expiry(expiry)
-            try:
-                chain_data = option_handler.get_option_chain(force_refresh=True)
-                if chain_data and "atm_strike" in chain_data:
-                    return {"success": True, "atm_strike": chain_data["atm_strike"]}
-            except Exception as e:
-                pass
-            return {"success": True}
+
+            chain_data = option_handler.get_option_chain(force_refresh=True)
+            if chain_data and "atm_strike" in chain_data:
+                return {"success": True, "atm_strike": chain_data["atm_strike"]}
+
         except Exception as e:
             return {"success": False, "message": f"Error: {e}"}
 

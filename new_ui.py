@@ -1,41 +1,42 @@
-import sys
 import atexit
-import json
-import math
-import threading
-from datetime import datetime
-from PyQt6.QtWidgets import (
-    QApplication,
-    QWidget,
-    QGridLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QHBoxLayout,
-    QCheckBox,
-    QVBoxLayout,
-    QFrame,
-    QSizePolicy,
-    QComboBox,
-    QTableWidget,
-    QTableWidgetItem,
-    QMessageBox,
-    QHeaderView,
-    QStackedWidget,
-    QScrollArea,
-    QAbstractItemView,
-)
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QSize, QTimer
-from PyQt6.QtGui import QColor, QFont, QIcon, QIntValidator, QDoubleValidator, QCursor
-from bi_rpc import RpcHandler
-import logging
-# logging.disable(logging.CRITICAL)
 
+# logging.disable(logging.CRITICAL)
 # import sys
 # sys.stderr = open("nul", "w")
 # sys.stdout = open("nul", "w")
-
 import ctypes
+import json
+import logging
+import math
+import sys
+import threading
+from datetime import datetime
+
+from PyQt6.QtCore import QObject, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QCursor, QDoubleValidator, QFont, QIcon, QIntValidator
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from bi_rpc import RpcHandler
 
 try:
     ctypes.windll.winmm.timeBeginPeriod(1)
@@ -193,7 +194,7 @@ def format_indian_number(n):
         else:
             # Fallback to standard comma separator
             return f"{val:,.0f}"
-    except:
+    except Exception:
         return str(n)
 
 
@@ -1246,8 +1247,28 @@ class CredentialsPanel(QFrame):
 
         layout.addStretch()
 
-        # Buttons
-        btn_layout = QHBoxLayout()
+        # Top Button Row: Copy & Paste Creds
+        creds_btn_layout = QHBoxLayout()
+        
+        self.btn_copy_creds = QPushButton("COPY CREDS")
+        self.btn_copy_creds.setFixedHeight(32)
+        self.btn_copy_creds.setStyleSheet(
+            f"background-color: #f59e0b; color: white; font-weight: bold;" # Amber color
+        )
+        self.btn_copy_creds.clicked.connect(self.on_copy_creds)
+        
+        self.btn_paste_creds = QPushButton("PASTE CREDS")
+        self.btn_paste_creds.setFixedHeight(32)
+        self.btn_paste_creds.setStyleSheet(
+            f"background-color: {COLOR_BLUE}; color: white; font-weight: bold;"
+        )
+        self.btn_paste_creds.clicked.connect(self.on_paste_creds)
+        
+        creds_btn_layout.addWidget(self.btn_copy_creds)
+        creds_btn_layout.addWidget(self.btn_paste_creds)
+        
+        # Bottom Button Row: Save & Connect
+        save_btn_layout = QHBoxLayout()
 
         self.btn_save_defaults = QPushButton("SAVE DEFAULTS")
         self.btn_save_defaults.setFixedHeight(32)
@@ -1262,9 +1283,38 @@ class CredentialsPanel(QFrame):
         )
         self.btn_connect.clicked.connect(self.on_connect_clicked)
 
-        btn_layout.addWidget(self.btn_save_defaults)
-        btn_layout.addWidget(self.btn_connect)
-        layout.addLayout(btn_layout)
+        save_btn_layout.addWidget(self.btn_save_defaults)
+        save_btn_layout.addWidget(self.btn_connect)
+        
+        layout.addLayout(creds_btn_layout)
+        layout.addLayout(save_btn_layout)
+
+    def on_copy_creds(self):
+        creds = {
+            "user_id": self.inp_user_id.text(),
+            "password": self.inp_password.text(),
+            "factor2": self.inp_factor2.text(),
+            "api_key": self.inp_api_key.text(),
+            "api_secret": self.inp_api_secret.text(),
+        }
+        json_str = json.dumps(creds)
+        clipboard = QApplication.clipboard()
+        clipboard.setText(json_str)
+        QMessageBox.information(self, "Success", "Credentials copied to clipboard!")
+
+    def on_paste_creds(self):
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+        try:
+            creds = json.loads(text)
+            if "user_id" in creds: self.inp_user_id.setText(creds["user_id"])
+            if "password" in creds: self.inp_password.setText(creds["password"])
+            if "factor2" in creds: self.inp_factor2.setText(creds["factor2"])
+            if "api_key" in creds: self.inp_api_key.setText(creds["api_key"])
+            if "api_secret" in creds: self.inp_api_secret.setText(creds["api_secret"])
+            QMessageBox.information(self, "Success", "Credentials pasted successfully!")
+        except json.JSONDecodeError:
+            QMessageBox.warning(self, "Invalid Data", "Clipboard does not contain valid JSON credentials.")
 
     def on_connect_clicked(self):
         creds = {
