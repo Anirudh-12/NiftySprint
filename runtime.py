@@ -1,4 +1,5 @@
 # pyi_rth_realtime.py
+# pyinstallers runtime hook
 import logging
 
 logging.disable(logging.CRITICAL)

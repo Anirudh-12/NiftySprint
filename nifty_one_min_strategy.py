@@ -77,6 +77,8 @@ class NiftyOneMinStrategy:
         # --- Direction Disable & Crossing State ---
         self.ce_disabled = False
         self.pe_disabled = False
+        self.ce_scan_active = False
+        self.pe_scan_active = False
         self.prev_opt_ltp = {"CE": 0.0, "PE": 0.0}
 
         # --- Trade / Position tracking ---
@@ -201,6 +203,8 @@ class NiftyOneMinStrategy:
 
             self.ce_disabled = False
             self.pe_disabled = False
+            self.ce_scan_active = False
+            self.pe_scan_active = False
             self.prev_opt_ltp = {"CE": 0.0, "PE": 0.0}
 
             self.futures_candles = []
@@ -246,6 +250,8 @@ class NiftyOneMinStrategy:
             self._reset_trade_state()
             self.ce_disabled = False
             self.pe_disabled = False
+            self.ce_scan_active = False
+            self.pe_scan_active = False
             self.reference_candle_fut = None
             self.reference_candle_ce = None
             self.reference_candle_pe = None
@@ -263,6 +269,8 @@ class NiftyOneMinStrategy:
             self._reset_trade_state()
             self.ce_disabled = False
             self.pe_disabled = False
+            self.ce_scan_active = False
+            self.pe_scan_active = False
         self._notify()
 
     def force_entry(self, direction):
@@ -415,38 +423,29 @@ class NiftyOneMinStrategy:
             snapped_minute = now.minute
             current_block_ts = int(now.replace(minute=snapped_minute, second=0, microsecond=0).timestamp())
 
-            raw = self.api.get_time_price_series(
+            candles = self.api.get_historical_data(
                 exchange=exchange,
                 token=nifty_token,
-                starttime=start_dt.timestamp(),
-                endtime=now.timestamp(),
+                start_time=start_dt.timestamp(),
+                end_time=now.timestamp(),
                 interval=1
             )
-            if not raw:
+            if not candles:
                 return
 
-            raw_sorted = raw[::-1]
-            for c in raw_sorted:
-                t_str = c.get('time', '')
-                try:
-                    dt = datetime.strptime(t_str, "%d-%m-%Y %H:%M:%S")
-                except Exception:
-                    try:
-                        dt = datetime.strptime(t_str, "%d/%m/%Y %H:%M:%S")
-                    except Exception:
-                        continue
-
-                c_ts = int(dt.timestamp())
+            candles_sorted = sorted(candles, key=lambda x: x.timestamp)
+            for c in candles_sorted:
+                c_ts = c.timestamp
                 if c_ts >= current_block_ts:
                     continue
 
-                hi = float(c.get('inth', 0) or 0)
-                lo = float(c.get('intl', 0) or 0)
-                cl = float(c.get('intc', 0) or 0)
+                hi = c.high
+                lo = c.low
+                cl = c.close
 
                 candle_obj = {
                     "time": c_ts,
-                    "open": float(c.get('into', 0) or 0),
+                    "open": c.open,
                     "high": hi,
                     "low": lo,
                     "close": cl,
@@ -483,39 +482,30 @@ class NiftyOneMinStrategy:
                 snapped_minute = now.minute
                 current_block_ts = int(now.replace(minute=snapped_minute, second=0, microsecond=0).timestamp())
 
-                raw = self.api.get_time_price_series(
+                candles = self.api.get_historical_data(
                     exchange=exchange,
                     token=token,
-                    starttime=start_dt.timestamp(),
-                    endtime=now.timestamp(),
+                    start_time=start_dt.timestamp(),
+                    end_time=now.timestamp(),
                     interval=1
                 )
-                if not raw:
+                if not candles:
                     return
 
-                raw_sorted = raw[::-1]
+                candles_sorted = sorted(candles, key=lambda x: x.timestamp)
                 valid_candles = []
-                for c in raw_sorted:
-                    t_str = c.get('time', '')
-                    try:
-                        dt = datetime.strptime(t_str, "%d-%m-%Y %H:%M:%S")
-                    except Exception:
-                        try:
-                            dt = datetime.strptime(t_str, "%d/%m/%Y %H:%M:%S")
-                        except Exception:
-                            continue
-
-                    c_ts = int(dt.timestamp())
+                for c in candles_sorted:
+                    c_ts = c.timestamp
                     if c_ts >= current_block_ts:
                         continue
 
-                    hi = float(c.get('inth', 0) or 0)
-                    lo = float(c.get('intl', 0) or 0)
-                    cl = float(c.get('intc', 0) or 0)
+                    hi = c.high
+                    lo = c.low
+                    cl = c.close
 
                     valid_candles.append((c_ts, {
                         "time": c_ts,
-                        "open": float(c.get('into', 0) or 0),
+                        "open": c.open,
                         "high": hi,
                         "low": lo,
                         "close": cl,
@@ -572,32 +562,24 @@ class NiftyOneMinStrategy:
             await asyncio.sleep(0.2)
             try:
                 now = datetime.now()
-                raw = await asyncio.to_thread(
-                    self.api.get_time_price_series,
+                candles = await asyncio.to_thread(
+                    self.api.get_historical_data,
                     exchange=exchange,
                     token=token,
-                    starttime=target_ts,
-                    endtime=now.timestamp(),
+                    start_time=target_ts,
+                    end_time=now.timestamp(),
                     interval=1
                 )
-                if not raw:
+                if not candles:
                     continue
                 found = False
-                for c in raw:
-                    t_str = c.get('time', '')
-                    try:
-                        dt = datetime.strptime(t_str, "%d-%m-%Y %H:%M:%S")
-                    except Exception:
-                        try:
-                            dt = datetime.strptime(t_str, "%d/%m/%Y %H:%M:%S")
-                        except Exception:
-                            continue
-                    c_ts = int(dt.timestamp())
+                for c in candles:
+                    c_ts = c.timestamp
                     if c_ts == target_ts:
-                        hi = float(c.get('inth', 0) or 0)
-                        lo = float(c.get('intl', 0) or 0)
-                        cl = float(c.get('intc', 0) or 0)
-                        op = float(c.get('into', 0) or 0)
+                        hi = c.high
+                        lo = c.low
+                        cl = c.close
+                        op = c.open
                         with self.lock:
                             candle_dict["open"] = op
                             candle_dict["high"] = hi
@@ -674,6 +656,7 @@ class NiftyOneMinStrategy:
                         completed,
                         label=f"{opt_type} Option"
                     )
+            self._on_candle_close(completed, opt_type)
             self.running_opt_candle[opt_type] = {"time": ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp}
             self.last_opt_candle_ts[opt_type] = ts
         else:
@@ -717,6 +700,21 @@ class NiftyOneMinStrategy:
                 pass
 
             self._check_and_set_reference_candle(candle)
+        elif candle_type in ("CE", "PE"):
+            if self.state in ("IN_TRADE", "TRAILING"):
+                return
+            ref_opt = self._get_option_reference_candle(candle_type)
+            if ref_opt and ref_opt.get("high"):
+                ref_high = ref_opt["high"]
+                if candle["close"] < ref_high:
+                    if candle_type == "CE" and self.ce_disabled:
+                        print(f"[RE-ACTIVATE] CE candle closed at {candle['close']} < Ref High {ref_high}. Re-activating CE setup.")
+                        self.ce_disabled = False
+                        self.ce_scan_active = False
+                    elif candle_type == "PE" and self.pe_disabled:
+                        print(f"[RE-ACTIVATE] PE candle closed at {candle['close']} < Ref High {ref_high}. Re-activating PE setup.")
+                        self.pe_disabled = False
+                        self.pe_scan_active = False
 
     def _check_and_set_reference_candle(self, fut_candle):
         """Sets the start-time candle as the reference candle when it closes."""
@@ -774,21 +772,26 @@ class NiftyOneMinStrategy:
                     ce_ltp = self.option_handler.get_option_ltp(self.strike_ce, "CE")
                     ref_high = ref_ce["high"]
                     threshold = ref_high + self.break_buffer
-                    prev_ltp = self.prev_opt_ltp.get("CE", 0.0)
-                    if ce_ltp > threshold:
-                        if prev_ltp == 0.0:
-                            print(f"[FILTER] CE setup already triggered before start! Discarding setup. CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}")
+
+                    if not getattr(self, "ce_scan_active", False):
+                        if ce_ltp > threshold:
+                            print(f"[FILTER] CE setup already triggered! Discarding setup. CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}")
                             self.ce_disabled = True
-                        elif prev_ltp <= threshold:
-                            print(f"[ENTRY] LONG CE option crossover breakout! CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})")
-                            if in_trade:
-                                print("[ENTRY] Opposite direction CE breakout while in PE trade! Flipping position.")
-                                self._exit_all("FLIP_TO_NEW_SETUP")
-                            self.active_opt_strike = self.strike_ce
-                            self.active_opt_type = "CE"
-                            self.opt_ltp = ce_ltp
-                            self._enter_trade("CE", self.reference_candle_fut)
                             return
+                        else:
+                            self.ce_scan_active = True
+
+                    prev_ltp = self.prev_opt_ltp.get("CE", 0.0)
+                    if ce_ltp > threshold and prev_ltp <= threshold:
+                        print(f"[ENTRY] LONG CE option crossover breakout! CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})")
+                        if in_trade:
+                            print("[ENTRY] Opposite direction CE breakout while in PE trade! Flipping position.")
+                            self._exit_all("FLIP_TO_NEW_SETUP")
+                        self.active_opt_strike = self.strike_ce
+                        self.active_opt_type = "CE"
+                        self.opt_ltp = ce_ltp
+                        self._enter_trade("CE", self.reference_candle_fut)
+                        return
 
         # Check SHORT (Buy PE)
         if self._is_direction_allowed("PE"):
@@ -798,21 +801,26 @@ class NiftyOneMinStrategy:
                     pe_ltp = self.option_handler.get_option_ltp(self.strike_pe, "PE")
                     ref_high = ref_pe["high"]
                     threshold = ref_high + self.break_buffer
-                    prev_ltp = self.prev_opt_ltp.get("PE", 0.0)
-                    if pe_ltp > threshold:
-                        if prev_ltp == 0.0:
-                            print(f"[FILTER] PE setup already triggered before start! Discarding setup. PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}")
+
+                    if not getattr(self, "pe_scan_active", False):
+                        if pe_ltp > threshold:
+                            print(f"[FILTER] PE setup already triggered! Discarding setup. PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}")
                             self.pe_disabled = True
-                        elif prev_ltp <= threshold:
-                            print(f"[ENTRY] SHORT PE option crossover breakout! PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})")
-                            if in_trade:
-                                print("[ENTRY] Opposite direction PE breakout while in CE trade! Flipping position.")
-                                self._exit_all("FLIP_TO_NEW_SETUP")
-                            self.active_opt_strike = self.strike_pe
-                            self.active_opt_type = "PE"
-                            self.opt_ltp = pe_ltp
-                            self._enter_trade("PE", self.reference_candle_fut)
                             return
+                        else:
+                            self.pe_scan_active = True
+
+                    prev_ltp = self.prev_opt_ltp.get("PE", 0.0)
+                    if pe_ltp > threshold and prev_ltp <= threshold:
+                        print(f"[ENTRY] SHORT PE option crossover breakout! PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})")
+                        if in_trade:
+                            print("[ENTRY] Opposite direction PE breakout while in CE trade! Flipping position.")
+                            self._exit_all("FLIP_TO_NEW_SETUP")
+                        self.active_opt_strike = self.strike_pe
+                        self.active_opt_type = "PE"
+                        self.opt_ltp = pe_ltp
+                        self._enter_trade("PE", self.reference_candle_fut)
+                        return
 
     # =========================================================================
     # ENTRY
@@ -822,6 +830,8 @@ class NiftyOneMinStrategy:
         # Taking a trade re-enables both directions for opposite trade scanning
         self.ce_disabled = False
         self.pe_disabled = False
+        self.ce_scan_active = False
+        self.pe_scan_active = False
 
         ref_opt = self._get_option_reference_candle(opt_type)
         if ref_opt and (ref_opt.get("high", 0) - ref_opt.get("low", 0)) > 0:
@@ -980,6 +990,8 @@ class NiftyOneMinStrategy:
         self._reset_trade_state()
         self.ce_disabled = False
         self.pe_disabled = False
+        self.ce_scan_active = False
+        self.pe_scan_active = False
 
     def _reset_trade_state(self):
         self.entry_price_opt = 0.0

@@ -112,40 +112,26 @@ class PositionManager:
                 else:
                     # price = float(self._ltp_map[tsym])
                     for api in self.apis:
-                        # time_now = time.time()
-                        order = api.place_order(
-                            tradingsymbol=tradingsymbol,
+                        order_id = api.place_order(
+                            symbol=tradingsymbol,
                             quantity=quantity,
-                            buy_or_sell=buy_or_sell,
+                            transaction_type=buy_or_sell,
                             exchange=exchange,
                             product_type=product_type,
-                            discloseqty=discloseqty,
-                            price_type=price_type,
-                            price=0,
-                            trigger_price=trigger_price,
-                            retention=retention,
-                            remarks=remarks,
+                            order_type=price_type,
+                            price=0.0,
+                            trigger_price=trigger_price if trigger_price else 0.0,
+                            remarks=remarks
                         )
-                        # time_after_order = time.time()
-                        # time_taken = time_after_order - time_now
-                        # ####logger.info(f"Time taken to place order: {time_taken}")
-                    #####logger.info(f"Order placed: {order}")
-                    order_id = order["norenordno"]
-                    order_history = api.single_order_history(order_id)[0]
-                    ####logger.info(f"Order history: {order_history}")
+                    
+                    order_history = api.get_order_status(order_id)
                     try:
-                        order_status = order_history.get("status", "REJECTED")
-                        price = float(
-                            order_history.get(
-                                "flprc",
-                                order_history.get("avgprc", self._ltp_map[tsym]),
-                            )
-                        )
+                        order_status = order_history.status if order_history else 'REJECTED'
+                        price = order_history.average_price if order_history else float(self._ltp_map[tsym])
                     except:
-                        order_status = "REJECTED"
-                        price = 0
+                        order_status = 'REJECTED'
                         price = float(self._ltp_map[tsym])
-
+                    
                     if order_status.upper() != "REJECTED":
                         self._apply_fill(tsym, qty, price, trantype)
                     else:
@@ -154,15 +140,15 @@ class PositionManager:
 
                 # API return shape you asked for
                 return {
-                    "norenordno": order["norenordno"],
+                    "norenordno": order_id,
                     "status": order_status,
-                    "stat": order["stat"],
+                    "stat": "Ok",
                     "price": price,
                 }
         return {
-            "norenordno": order["norenordno"],
+            "norenordno": order_id,
             "status": order_status,
-            "stat": order["stat"],
+            "stat": "Ok",
             "price": price,
         }
 
