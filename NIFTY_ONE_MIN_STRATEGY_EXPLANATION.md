@@ -159,14 +159,14 @@ graph LR
 - **No Trailing Before T1**: While `t1_hit == False`, the stop loss remains strictly fixed at $EP - cs$.
 
 ### 2. Multi-Stage Targets
-- **Target 1 (`T1`)**: $EP + cs \times \text{t1\_pct}$ (default $0.5 \times cs$).
+- **Target 1 (`T1`)**: `EP + cs * t1_pct` (default `0.5 * cs`).
   - Sells `t1_qty` at Market.
   - Sets `t1_hit = True`.
-  - **Activates Trailing SL**: Moves stop loss to $\max(\text{current\_sl}, \text{option\_high\_since\_entry} - \text{trail\_points})$.
-- **Target 2 (`T2`)**: $EP + cs \times \text{t2\_pct}$ (default $1.0 \times cs$).
+  - **Activates Trailing SL**: Moves stop loss to $\max$(`current_sl`, `option_high_since_entry` - `trail_points`).
+- **Target 2 (`T2`)**: `EP + cs * t2_pct` (default `1.0 * cs`).
   - Sells `t2_qty` at Market.
   - Sets `t2_hit = True` and transitions strategy state to `TRAILING`.
-- **Target 3 (`T3`)**: $EP + cs \times \text{t3\_mult}$ (default $2.0 \times cs$).
+- **Target 3 (`T3`)**: `EP + cs * t3_mult` (default `2.0 * cs`).
   - Exits all remaining position quantity (`_exit_all("T3")`).
 
 ### 3. Trailing Stop Loss (After T1)
