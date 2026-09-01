@@ -88,15 +88,15 @@ Before any option breakout can trigger a trade, the strategy checks whether the 
 
 ```mermaid
 flowchart TD
-    A[Check Direction: CE or PE] --> B{Direction Disabled by Previous Exit?}
-    B -- Yes --> C[Direction BLOCKED]
-    B -- No --> D{Matches User direction_filter?}
+    A["Check Direction: CE or PE"] --> B{"Direction Disabled by Previous Exit?"}
+    B -- Yes --> C["Direction BLOCKED"]
+    B -- No --> D{"Matches User direction_filter?"}
     D -- No --> C
-    D -- Yes --> E{Both Price Long & Short OK?}
-    E -- Yes --> F[Direction ALLOWED (Skip OI)]
-    E -- No --> G{Price Filter OK for Direction?}
+    D -- Yes --> E{"Both Price Long & Short OK?"}
+    E -- Yes --> F["Direction ALLOWED (Skip OI)"]
+    E -- No --> G{"Price Filter OK for Direction?"}
     G -- Yes --> F
-    G -- No --> H{Live OI Filter OK for Direction?}
+    G -- No --> H{"Live OI Filter OK for Direction?"}
     H -- Yes --> F
     H -- No --> C
 ```
@@ -124,11 +124,11 @@ flowchart TD
 ### 1. Breakout Trigger (`_check_breakout`)
 While in `SCANNING` mode, on every market tick:
 - **CE Breakout (Long Signal)**:
-  - $\text{CE LTP} > \text{Reference CE High} + \text{break\_buffer}$
-  - Previous tick CE LTP was $\le \text{Reference CE High} + \text{break\_buffer}$ (ensuring a fresh crossover).
+  - `CE LTP` > `Reference CE High` + `break_buffer`
+  - Previous tick CE LTP was $\le$ `Reference CE High` + `break_buffer` (ensuring a fresh crossover).
 - **PE Breakout (Short Signal)**:
-  - $\text{PE LTP} > \text{Reference PE High} + \text{break\_buffer}$
-  - Previous tick PE LTP was $\le \text{Reference PE High} + \text{break\_buffer}$.
+  - `PE LTP` > `Reference PE High` + `break_buffer`
+  - Previous tick PE LTP was $\le$ `Reference PE High` + `break_buffer`.
 
 ### 2. Opposite Direction Position Flip
 - If the strategy is currently `IN_TRADE` or `TRAILING` in one direction (e.g., holding **CE**) and a valid breakout occurs in the **opposite direction** (e.g., **PE** breaks out above its reference high + buffer):
@@ -171,7 +171,7 @@ graph LR
 
 ### 3. Trailing Stop Loss (After T1)
 - Once T1 is achieved, on every tick where option price hits a new high (`option_high_since_entry`), the trailing stop loss is updated:
-  $$\text{Trailing SL} = \max(\text{Current SL}, \, \text{option\_high\_since\_entry} - \text{trail\_points})$$
+  - **Trailing SL** = $\max$(`Current SL`, `option_high_since_entry` - `trail_points`)
 - If $\text{Option LTP} \le \text{Current SL}$, all remaining quantity is exited at Market (`_exit_all("SL")`).
 
 ---
