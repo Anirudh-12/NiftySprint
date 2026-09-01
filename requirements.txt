@@ -1,9 +1,9 @@
-﻿pyotp
+pyotp
 pyyaml
 requests
 httpx
-pywebview
 websocket-client
 pandas
 pyqt6
 pyzmq
+keyring

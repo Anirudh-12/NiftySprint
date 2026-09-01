@@ -7,7 +7,7 @@ An automated quantitative trading desktop application for NIFTY Index Options, b
 - **Automated Options Trading**: Monitors and executes trades on NIFTY Call (CE) and Put (PE) options.
 - **Advanced Strategy Mechanics**: Includes Reference Candle locking, Two-Layer Directional Filtering (Price Action & Live Open Interest), and Anti-Whipsaw protections.
 - **Dynamic Risk Management**: Multi-stage profit taking (T1, T2, T3) and trailing stop-loss features.
-- **Desktop UI**: A built-in user interface built with Eel and PyWebview for easy configuration and monitoring.
+- **Desktop UI**: A built-in user interface built natively with PyQt6 for easy configuration and monitoring.
 - **Flattrade Integration**: Fully integrates with the Flattrade Broker API for live data and order execution.
 
 ## Strategy Deep-Dive
@@ -34,15 +34,10 @@ For a detailed technical and functional explanation of the trading strategy logi
 
 ## Configuration
 
-1. You need to configure your Flattrade credentials. Update `flattradecred.yaml` (or `flattradecred_data.yaml` if applicable) with your API details:
-   ```yaml
-   user_id: "YOUR_USER_ID"
-   password: "YOUR_PASSWORD"
-   totp_key: "YOUR_TOTP_KEY"
-   api_key: "YOUR_API_KEY"
-   api_secret: "YOUR_API_SECRET"
-   ```
-2. The UI defaults and other configurations are stored in `ui_defaults.json` and `execonfig.json`. You can modify these directly or via the desktop UI.
+1. **Credentials**: The application now stores credentials securely in your operating system's native credential manager. 
+   - Launch the application and use the **KEY** tab in the desktop UI to enter and save your credentials securely.
+   - *Legacy users*: If you have an old `flattradecred.yaml`, you can run `python export_creds_string.py` to generate a migration string that can be pasted directly into the UI.
+2. Strategy defaults and configurations are stored in `ui_defaults.json` and `execonfig.json`. You can modify these directly or via the desktop UI.
 
 ## Usage
 
@@ -62,8 +57,8 @@ The desktop application UI will launch, allowing you to:
 
 The application is structured into two main multiprocessing components for stability and performance:
 - **Backend Process** (`new_backend.py` / `nifty_one_min_strategy.py`): Handles market data streams, strategy state machine, risk management, and order execution.
-- **UI Process** (`new_ui.py`): Renders the desktop frontend using Eel and PyWebview.
-- **RPC Communication**: The frontend and backend communicate over a local TCP socket (auto-selected port) to ensure real-time UI updates without blocking the trading engine.
+- **UI Process** (`new_ui.py`): Renders the desktop frontend natively using PyQt6.
+- **RPC Communication**: The frontend and backend communicate via ZeroMQ RPC (Dealer-Dealer pattern) over a local TCP socket (auto-selected port) to ensure real-time UI updates without blocking the trading engine.
 
 ## Disclaimer
 
