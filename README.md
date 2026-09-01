@@ -7,7 +7,7 @@ An automated quantitative trading desktop application for NIFTY Index Options, b
 - **Automated Options Trading**: Monitors and executes trades on NIFTY Call (CE) and Put (PE) options.
 - **Advanced Strategy Mechanics**: Includes Reference Candle locking, Two-Layer Directional Filtering (Price Action & Live Open Interest), and Anti-Whipsaw protections.
 - **Dynamic Risk Management**: Multi-stage profit taking (T1, T2, T3) and trailing stop-loss features.
-- **Desktop UI**: A built-in user interface built with Eel and PyWebview for easy configuration and monitoring.
+- **Desktop UI**: A built-in user interface built with PyQT6
 - **Flattrade Integration**: Fully integrates with the Flattrade Broker API for live data and order execution.
 
 ## Strategy Deep-Dive
@@ -34,7 +34,7 @@ For a detailed technical and functional explanation of the trading strategy logi
 
 ## Configuration
 
-1. You need to configure your Flattrade credentials. Update `flattradecred.yaml` (or `flattradecred_data.yaml` if applicable) with your API details:
+1. You need to configure your Flattrade credentials in the key tab. 
    ```yaml
    user_id: "YOUR_USER_ID"
    password: "YOUR_PASSWORD"
@@ -42,7 +42,7 @@ For a detailed technical and functional explanation of the trading strategy logi
    api_key: "YOUR_API_KEY"
    api_secret: "YOUR_API_SECRET"
    ```
-2. The UI defaults and other configurations are stored in `ui_defaults.json` and `execonfig.json`. You can modify these directly or via the desktop UI.
+2. The UI defaults and other configurations are stored in `ui_defaults.json`.
 
 ## Usage
 
