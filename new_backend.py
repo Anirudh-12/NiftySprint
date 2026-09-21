@@ -29,8 +29,26 @@ from datetime import datetime
 from multiprocessing import freeze_support
 from threading import Thread
 
+import hashlib
 import keyring
 import yaml
+
+# ── Derive a path-scoped keyring service name ──────────────────────────────
+# When running as a PyInstaller EXE, sys.frozen is True and sys.executable
+# points to the .exe file; use its parent directory.  When running as a
+# plain Python script, use the directory that contains this file.
+# Hashing the path keeps the service-name short and avoids special chars.
+def _get_app_base_dir() -> str:
+    if getattr(sys, "frozen", False):
+        # Running as a compiled exe
+        return os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        # Running as a regular Python script
+        return os.path.dirname(os.path.abspath(__file__))
+
+_path_hash = hashlib.sha256(_get_app_base_dir().encode()).hexdigest()[:12]
+KEYRING_SERVICE = f"FlattradeApp_{_path_hash}"
+# ──────────────────────────────────────────────────────────────────────────
 
 # logging.disable(logging.CRITICAL)
 from auth import generate_key
@@ -85,13 +103,13 @@ def format_expiry_date(expiry_date):
 
 
 def save_credentials(credentials):
-    """Save credentials to keyring"""
-    keyring.set_password("FlattradeApp", "user_id", credentials.get("user_id", ""))
-    keyring.set_password("FlattradeApp", "password", credentials.get("password", ""))
-    keyring.set_password("FlattradeApp", "factor2", credentials.get("factor2", ""))
-    keyring.set_password("FlattradeApp", "api_key", credentials.get("api_key", ""))
+    """Save credentials to keyring (scoped to this app's install directory)"""
+    keyring.set_password(KEYRING_SERVICE, "user_id", credentials.get("user_id", ""))
+    keyring.set_password(KEYRING_SERVICE, "password", credentials.get("password", ""))
+    keyring.set_password(KEYRING_SERVICE, "factor2", credentials.get("factor2", ""))
+    keyring.set_password(KEYRING_SERVICE, "api_key", credentials.get("api_key", ""))
     keyring.set_password(
-        "FlattradeApp", "api_secret", credentials.get("api_secret", "")
+        KEYRING_SERVICE, "api_secret", credentials.get("api_secret", "")
     )
 
 
@@ -386,15 +404,15 @@ def backend_main(rpc_address):
     @bridge.expose
     def get_saved_credentials():
         try:
-            user_id = keyring.get_password("FlattradeApp", "user_id")
+            user_id = keyring.get_password(KEYRING_SERVICE, "user_id")
             if not user_id:
                 return {}
             return {
                 "user_id": user_id,
-                "password": keyring.get_password("FlattradeApp", "password") or "",
-                "factor2": keyring.get_password("FlattradeApp", "factor2") or "",
-                "api_key": keyring.get_password("FlattradeApp", "api_key") or "",
-                "api_secret": keyring.get_password("FlattradeApp", "api_secret") or "",
+                "password": keyring.get_password(KEYRING_SERVICE, "password") or "",
+                "factor2": keyring.get_password(KEYRING_SERVICE, "factor2") or "",
+                "api_key": keyring.get_password(KEYRING_SERVICE, "api_key") or "",
+                "api_secret": keyring.get_password(KEYRING_SERVICE, "api_secret") or "",
             }
         except Exception as e:
             return {}

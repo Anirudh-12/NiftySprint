@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple  # noqa: UP035
 
 # from logging import ####logger
 from NorenRestApiPy.NorenApi import NorenApi
+from models import PositionData
 
 
 class PositionManager:
@@ -226,8 +227,25 @@ class PositionManager:
             pass
             ####logger.error(f"Error in update_ltp for {tsym}: {e}")
 
-    def _sanitize_position_data(self, pos: Dict) -> Dict:
-        """Ensure all numeric fields are correctly typed."""
+    def _sanitize_position_data(self, pos) -> Dict:
+        """Ensure all numeric fields are correctly typed.
+        
+        Accepts either a raw dict (legacy) or a PositionData dataclass
+        (returned by FlatTradeBroker.get_positions).
+        """
+        # If broker returned a PositionData dataclass, convert to dict
+        if isinstance(pos, PositionData):
+            raw = pos.raw_data if pos.raw_data else {}
+            # Ensure the fields we always need are present
+            pos = {
+                "tsym":       raw.get("tsym", pos.symbol),
+                "netqty":     raw.get("netqty", pos.quantity),
+                "netavgprc":  raw.get("netavgprc", pos.average_price),
+                "lp":         raw.get("lp", pos.last_price),
+                "rpnl":       raw.get("rpnl", pos.realized_pnl),
+                "urmtom":     raw.get("urmtom", pos.unrealized_pnl),
+                **{k: v for k, v in raw.items() if k not in ("tsym", "netqty", "netavgprc", "lp", "rpnl", "urmtom")},
+            }
         sanitized = pos.copy()
         try:
             # Net Quantity

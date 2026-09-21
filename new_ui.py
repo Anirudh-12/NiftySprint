@@ -344,9 +344,11 @@ class Header(QFrame):
 
         self.btn_run = QPushButton("RUN")
         self.btn_run.setFixedSize(40, 22)
-        self.btn_run.setStyleSheet(
-            f"background-color: #374151; color: white; font-size: 10px;"
-        )
+        self.btn_run.setStyleSheet("""
+            QPushButton { background-color: #374151; color: white; font-size: 10px; border-radius: 3px; }
+            QPushButton:hover { background-color: #4b5563; }
+            QPushButton:pressed { background-color: #1f2937; }
+        """)
         self.btn_run.clicked.connect(self.on_run_clicked)
         self.btn_run.setEnabled(True)  # Enabled by default now
 
@@ -411,14 +413,18 @@ class Header(QFrame):
     def set_run_state(self, running):
         if running:
             self.btn_run.setText("STOP")
-            self.btn_run.setStyleSheet(
-                f"background-color: {COLOR_RED}; color: white; font-size: 10px;"
-            )
+            self.btn_run.setStyleSheet("""
+                QPushButton { background-color: #ef4444; color: white; font-size: 10px; border-radius: 3px; }
+                QPushButton:hover { background-color: #f87171; }
+                QPushButton:pressed { background-color: #b91c1c; }
+            """)
         else:
             self.btn_run.setText("RUN")
-            self.btn_run.setStyleSheet(
-                f"background-color: #374151; color: white; font-size: 10px;"
-            )
+            self.btn_run.setStyleSheet("""
+                QPushButton { background-color: #374151; color: white; font-size: 10px; border-radius: 3px; }
+                QPushButton:hover { background-color: #4b5563; }
+                QPushButton:pressed { background-color: #1f2937; }
+            """)
 
     def update_market(self, data):
         if "nifty_ltp" in data:
@@ -749,11 +755,11 @@ class StrategyPanel(QFrame):
         sf_layout.addWidget(self.lbl_sl, 2, 5)
 
         main.addWidget(status_frame)
+        # ── Section B + Force-Buy: combined QGridLayout for perfect column alignment ──
+        stk_grid = QGridLayout()
+        stk_grid.setSpacing(4)
 
-        # ── Section B: Strikes (Moved just above the start stop line) ─────────────────
-        stk_row = QHBoxLayout()
-        stk_row.setSpacing(4)
-
+        # Widgets
         lbl_ce = QLabel("CE STK")
         lbl_ce.setStyleSheet("color:white;font-size:10px;font-weight:bold;")
         self.inp_strike_ce = GridValueInput(0, width=55)
@@ -782,20 +788,48 @@ class StrategyPanel(QFrame):
             f"color:{COLOR_RED};font-weight:bold;font-size:12px;min-width:40px;"
         )
 
-        for w in [
-            lbl_ce,
-            self.inp_strike_ce,
-            btn_cep,
-            btn_cem,
-            self.lbl_ce_price,
-            lbl_pe,
-            self.inp_strike_pe,
-            btn_pep,
-            btn_pem,
-            self.lbl_pe_price,
-        ]:
-            stk_row.addWidget(w)
-        main.addLayout(stk_row)
+        # Force-buy buttons
+        self.btn_force_ce = QPushButton("Buy CE")
+        self.btn_force_ce.setFixedHeight(28)
+        self.btn_force_ce.setStyleSheet("""
+            QPushButton { background-color:#22c55e; color:black; font-weight:bold; font-size:11px; border-radius:3px; }
+            QPushButton:hover { background-color:#4ade80; }
+            QPushButton:pressed { background-color:#16a34a; }
+            QPushButton:disabled { background-color:#374151; color:#6b7280; }
+        """)
+        self.btn_force_ce.clicked.connect(self.on_force_buy_ce)
+        self.btn_force_ce.setEnabled(False)
+
+        self.btn_force_pe = QPushButton("Buy PE")
+        self.btn_force_pe.setFixedHeight(28)
+        self.btn_force_pe.setStyleSheet("""
+            QPushButton { background-color:#ef4444; color:white; font-weight:bold; font-size:11px; border-radius:3px; }
+            QPushButton:hover { background-color:#f87171; }
+            QPushButton:pressed { background-color:#b91c1c; }
+            QPushButton:disabled { background-color:#374151; color:#6b7280; }
+        """)
+        self.btn_force_pe.clicked.connect(self.on_force_buy_pe)
+        self.btn_force_pe.setEnabled(False)
+
+        # Grid columns:  0=CE lbl  1=CE inp  2=CE+  3=CE-  4=CE price  5=PE lbl  6=PE inp  7=PE+  8=PE-  9=PE price
+        # Row 0: strike inputs
+        stk_grid.addWidget(lbl_ce,               0, 0)
+        stk_grid.addWidget(self.inp_strike_ce,   0, 1)
+        stk_grid.addWidget(btn_cep,              0, 2)
+        stk_grid.addWidget(btn_cem,              0, 3)
+        stk_grid.addWidget(self.lbl_ce_price,    0, 4)
+        stk_grid.addWidget(lbl_pe,               0, 5)
+        stk_grid.addWidget(self.inp_strike_pe,   0, 6)
+        stk_grid.addWidget(btn_pep,              0, 7)
+        stk_grid.addWidget(btn_pem,              0, 8)
+        stk_grid.addWidget(self.lbl_pe_price,    0, 9)
+
+        # Row 1: Buy CE spans cols 1-3 (inp/+/-), Buy PE spans cols 6-8 (inp/+/-)
+        stk_grid.addWidget(self.btn_force_ce,    1, 1, 1, 3)
+        stk_grid.addWidget(self.btn_force_pe,    1, 6, 1, 3)
+
+        main.addLayout(stk_grid)
+
 
         # ── Section F: Controls ──────────────────────────────────
         ctrl_row = QHBoxLayout()
@@ -821,9 +855,12 @@ class StrategyPanel(QFrame):
         self.btn_start.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self.btn_start.setStyleSheet(
-            f"background-color:{COLOR_GREEN};color:black;font-weight:bold;font-size:11px;"
-        )
+        self.btn_start.setStyleSheet("""
+            QPushButton { background-color:#22c55e; color:black; font-weight:bold; font-size:11px; border-radius:3px; }
+            QPushButton:hover { background-color:#4ade80; }
+            QPushButton:pressed { background-color:#16a34a; }
+            QPushButton:disabled { background-color:#374151; color:#6b7280; }
+        """)
         self.btn_start.clicked.connect(self.on_start_clicked)
 
         self.lbl_status = QLabel("STOPPED")
@@ -841,9 +878,12 @@ class StrategyPanel(QFrame):
         self.btn_stop.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self.btn_stop.setStyleSheet(
-            "background-color:#e81515;color:white;font-weight:bold;font-size:13px;"
-        )
+        self.btn_stop.setStyleSheet("""
+            QPushButton { background-color:#e81515; color:white; font-weight:bold; font-size:13px; border-radius:3px; }
+            QPushButton:hover { background-color:#f87171; }
+            QPushButton:pressed { background-color:#b91c1c; }
+            QPushButton:disabled { background-color:#374151; color:#6b7280; }
+        """)
         self.btn_stop.clicked.connect(self.on_stop_clicked)
         self.btn_stop.setEnabled(False)
 
@@ -1075,6 +1115,8 @@ class StrategyPanel(QFrame):
             self._strategy_running = True
             self.btn_start.setEnabled(False)
             self.btn_stop.setEnabled(True)
+            self.btn_force_ce.setEnabled(True)
+            self.btn_force_pe.setEnabled(True)
         except Exception:
             pass
 
@@ -1087,6 +1129,22 @@ class StrategyPanel(QFrame):
         self._strategy_running = False
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self.btn_force_ce.setEnabled(False)
+        self.btn_force_pe.setEnabled(False)
+
+    def on_force_buy_ce(self):
+        """Force-enter a CE trade, bypassing the stale breakout filter."""
+        try:
+            self.bridge.notify("force_nifty_entry", "CE")
+        except Exception:
+            pass
+
+    def on_force_buy_pe(self):
+        """Force-enter a PE trade, bypassing the stale breakout filter."""
+        try:
+            self.bridge.notify("force_nifty_entry", "PE")
+        except Exception:
+            pass
 
     def update_settings(self):
         pass  # no-op — settings sent at start time
@@ -1137,6 +1195,8 @@ class StrategyPanel(QFrame):
         self._strategy_running = is_running
         self.btn_start.setEnabled(not is_running)
         self.btn_stop.setEnabled(is_running)
+        self.btn_force_ce.setEnabled(is_running)
+        self.btn_force_pe.setEnabled(is_running)
 
         # Pre-market
         pm_ok = data.get("premarket_ok", False)
