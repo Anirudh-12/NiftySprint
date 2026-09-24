@@ -91,6 +91,11 @@ except Exception as e:
 ui_selected_ce_strike = 0
 ui_selected_pe_strike = 0
 
+# Cached Preview Candles (injected into strategy on start)
+_cached_preview_ce = {}
+_cached_preview_pe = {}
+_cached_preview_start_time = None
+
 bridge = None  # Will be initialized in backend_main
 
 # --- Helper Functions ---
@@ -545,6 +550,14 @@ def backend_main(rpc_address):
                 stop_time=stop_time,
                 trail_points=trail_points,
             )
+            
+            # Inject pre-fetched preview candles if they match the current start time
+            global _cached_preview_ce, _cached_preview_pe, _cached_preview_start_time
+            if start_time == _cached_preview_start_time:
+                nifty_strategy.inject_preview_candles(
+                    _cached_preview_ce, _cached_preview_pe
+                )
+
             if not nifty_strategy.is_running:
                 nifty_strategy.start()
             else:
@@ -630,8 +643,90 @@ def backend_main(rpc_address):
         return {"state": "IDLE"}
 
     @bridge.expose
-    def oi_toggle(enabled):
-        return {"success": True}
+    def get_preview_candles(start_time, strike_ce, strike_pe):
+        """
+        Fetch CE & PE option candles at the start_time minute from REST history.
+        Works entirely independently of the strategy object.
+        Caches the result to be injected into the strategy when it starts.
+        """
+        global api, option_handler
+        global _cached_preview_ce, _cached_preview_pe, _cached_preview_start_time
+        
+        try:
+            if not api or not option_handler:
+                return {"success": False, "message": "Not connected"}
+            
+            # Parse start_time
+            from datetime import datetime, time as dtime
+            parts = str(start_time).split(":")
+            if len(parts) != 2:
+                return {"success": False, "message": "Invalid time format"}
+            start_t = dtime(int(parts[0]), int(parts[1]))
+            
+            now = datetime.now()
+            start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
+            target_dt = now.replace(
+                hour=start_t.hour, minute=start_t.minute, second=0, microsecond=0
+            )
+            target_ts = int(target_dt.timestamp())
+            
+            result = {}
+            for opt_type, strike in (("CE", int(strike_ce or 0)), ("PE", int(strike_pe or 0))):
+                if strike <= 0:
+                    result[opt_type.lower() + "_candle"] = {}
+                    continue
+                try:
+                    token_info = option_handler._get_option_token("NIFTY", opt_type, strike)
+                    if not token_info:
+                        result[opt_type.lower() + "_candle"] = {}
+                        continue
+                    
+                    exchange = token_info.get("exchange", "NFO")
+                    token = token_info.get("token")
+                    if not token:
+                        result[opt_type.lower() + "_candle"] = {}
+                        continue
+
+                    candles = api.get_historical_data(
+                        exchange=exchange,
+                        token=token,
+                        start_time=start_dt.timestamp(),
+                        end_time=(target_ts + 120),
+                        interval=1,
+                    )
+                    
+                    candle_dict = {}
+                    if candles:
+                        for c in sorted(candles, key=lambda x: x.timestamp):
+                            if c.timestamp == target_ts:
+                                try:
+                                    ts_str = datetime.fromtimestamp(c.timestamp).strftime("%H:%M")
+                                except Exception:
+                                    ts_str = str(start_time)
+                                candle_dict = {
+                                    "time": target_ts,  # Include timestamp for strategy reference
+                                    "open_time": ts_str,
+                                    "high": c.high,
+                                    "low": c.low,
+                                    "size": round(c.high - c.low, 2),
+                                }
+                                break
+                    result[opt_type.lower() + "_candle"] = candle_dict
+                except Exception as e:
+                    print(f"[PREVIEW] Error fetching {opt_type}: {e}")
+                    result[opt_type.lower() + "_candle"] = {}
+
+            # Cache the result for injection
+            _cached_preview_ce = result.get("ce_candle", {})
+            _cached_preview_pe = result.get("pe_candle", {})
+            _cached_preview_start_time = str(start_time)
+            
+            result["success"] = True
+            return result
+            
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
 
     @bridge.expose
     def execute_ce_trade(strike_price, action, quantity):

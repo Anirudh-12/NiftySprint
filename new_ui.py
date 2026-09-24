@@ -438,11 +438,21 @@ class Header(QFrame):
 
 
 class StrategyPanel(QFrame):
+    sig_preview_ready = pyqtSignal(str, str)
+
     def __init__(self, bridge, parent=None):
         super().__init__(parent)
         self.bridge = bridge
         self.lot_size = 65
         self.setObjectName("StrategyBox")
+
+        self.sig_preview_ready.connect(self._set_preview_labels)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(
+            lambda: self._fetch_candle_preview(is_retry=True)
+        )
+        self._preview_retry_count = 0
 
         main = QVBoxLayout(self)
         main.setContentsMargins(6, 6, 6, 6)
@@ -467,13 +477,6 @@ class StrategyPanel(QFrame):
         self.oi_lbl_pe_v.setStyleSheet(
             f"color:{COLOR_GREEN};font-size:12px;font-weight:bold;min-width:40px;"
         )
-        self.toggle_oi = QCheckBox("OI")
-        self.toggle_oi.setChecked(True)
-        self.toggle_oi.setStyleSheet("""
-            QCheckBox{color:white;font-size:10px;font-weight:600;spacing:4px;}
-            QCheckBox::indicator{width:28px;height:14px;border-radius:7px;background:#374151;border:none;}
-            QCheckBox::indicator:checked{background:#22c55e;}
-        """)
         self.lbl_pnl_t = QLabel("PNL:")
         self.lbl_pnl_t.setStyleSheet("color:white;font-weight:bold;font-size:12px;")
         self.lbl_pnl_v = QLabel("0.00")
@@ -488,7 +491,6 @@ class StrategyPanel(QFrame):
         hl.addWidget(self.oi_lbl_pe_t)
         hl.addWidget(self.oi_lbl_pe_v)
         hl.addStretch()
-        hl.addWidget(self.toggle_oi)
         hl.addStretch()
         hl.addWidget(self.lbl_pnl_t)
         hl.addWidget(self.lbl_pnl_v)
@@ -685,6 +687,9 @@ class StrategyPanel(QFrame):
             grid_params.addWidget(bm, 4, col + 3)
             inp.editingFinished.connect(self._push_config)
 
+        # Auto-fetch candle preview when start_time changes
+        self.inp_start_time.editingFinished.connect(self._fetch_candle_preview)
+
         # Set Column stretches to make sure it aligns on the left and has correct spacing
         grid_params.setColumnStretch(
             12, 1
@@ -718,9 +723,6 @@ class StrategyPanel(QFrame):
         self.lbl_setup = stat_val(COLOR_YELLOW)
         sf_layout.addWidget(self.lbl_setup, 0, 1)
 
-        sf_layout.addWidget(stat_lbl("CANDLE"), 0, 2)
-        self.lbl_trig_candle = stat_val()
-        sf_layout.addWidget(self.lbl_trig_candle, 0, 3)
 
         sf_layout.addWidget(stat_lbl("OPT SZ"), 0, 4)
         self.lbl_opt_size = stat_val(COLOR_CYAN)
@@ -731,13 +733,17 @@ class StrategyPanel(QFrame):
         sf_layout.addWidget(self.lbl_ce_candle_hdr, 1, 0)
         self.lbl_ce_candle = stat_val(COLOR_GREEN)
         self.lbl_ce_candle.setMinimumWidth(130)
-        sf_layout.addWidget(self.lbl_ce_candle, 1, 1, 1, 2)  # span 2 cols for more space
+        sf_layout.addWidget(
+            self.lbl_ce_candle, 1, 1, 1, 2
+        )  # span 2 cols for more space
 
         self.lbl_pe_candle_hdr = stat_lbl("PE CANDLE", COLOR_RED)
         sf_layout.addWidget(self.lbl_pe_candle_hdr, 1, 3)
         self.lbl_pe_candle = stat_val(COLOR_RED)
         self.lbl_pe_candle.setMinimumWidth(130)
-        sf_layout.addWidget(self.lbl_pe_candle, 1, 4, 1, 2)  # span 2 cols for more space
+        sf_layout.addWidget(
+            self.lbl_pe_candle, 1, 4, 1, 2
+        )  # span 2 cols for more space
 
         # Keep lbl_entry as attribute for backwards compat with update_state references
         self.lbl_entry = stat_val(COLOR_BLUE)
@@ -766,6 +772,7 @@ class StrategyPanel(QFrame):
         self.inp_strike_ce = GridValueInput(0, width=55)
         self.inp_strike_ce.editingFinished.connect(self.update_ui_strikes)
         self.inp_strike_ce.editingFinished.connect(self._push_config)
+        self.inp_strike_ce.editingFinished.connect(self._fetch_candle_preview)
         btn_cep = StepperButton("+", COLOR_GREEN)
         btn_cep.clicked.connect(lambda _: self.adjust_strike(self.inp_strike_ce, 50))
         btn_cem = StepperButton("-", COLOR_RED)
@@ -780,6 +787,7 @@ class StrategyPanel(QFrame):
         self.inp_strike_pe = GridValueInput(0, width=55)
         self.inp_strike_pe.editingFinished.connect(self.update_ui_strikes)
         self.inp_strike_pe.editingFinished.connect(self._push_config)
+        self.inp_strike_pe.editingFinished.connect(self._fetch_candle_preview)
         btn_pep = StepperButton("+", COLOR_GREEN)
         btn_pep.clicked.connect(lambda _: self.adjust_strike(self.inp_strike_pe, 50))
         btn_pem = StepperButton("-", COLOR_RED)
@@ -894,6 +902,9 @@ class StrategyPanel(QFrame):
         main.addLayout(ctrl_row)
 
         self.load_defaults()
+        # Track preview state separately from live strategy candle state
+        self._preview_ce_candle = {}
+        self._preview_pe_candle = {}
 
     # ── Helpers ──────────────────────────────────────────────────
 
@@ -976,6 +987,7 @@ class StrategyPanel(QFrame):
             inp.setText(str(val))
             self.update_ui_strikes()
             self._push_config()
+            self._fetch_candle_preview()
         except Exception:
             pass
 
@@ -1003,6 +1015,9 @@ class StrategyPanel(QFrame):
                 new_m = total_min % 60
                 inp.setText(f"{new_h:02d}:{new_m:02d}")
                 self._push_config()
+                # If this is the start time stepper, refresh candle preview
+                if inp is self.inp_start_time:
+                    self._fetch_candle_preview()
         except Exception:
             pass
 
@@ -1054,6 +1069,124 @@ class StrategyPanel(QFrame):
         pe = self.inp_strike_pe.text() or "0"
         self.bridge.notify("update_ui_strikes", ce, pe)
 
+    def _fetch_candle_preview(self, is_retry=False):
+        """Auto-fetch CE & PE reference candles at start_time from REST. Runs in background thread."""
+        if not is_retry:
+            self._preview_retry_count = 0
+            self._preview_timer.stop()
+
+        start_time = self.inp_start_time.text().strip() or "09:17"
+        strike_ce = self.inp_strike_ce.text() or "0"
+        strike_pe = self.inp_strike_pe.text() or "0"
+
+        # Only fetch if strikes are non-zero and we are not currently running the strategy
+        if int(strike_ce) <= 0 and int(strike_pe) <= 0:
+            return
+        if self._strategy_running:
+            return  # Live strategy already handles candle display
+
+        # Show loading indicator
+        if not is_retry:
+            self.lbl_ce_candle.setText("fetching...")
+            self.lbl_pe_candle.setText("fetching...")
+
+
+        def _do_fetch():
+            try:
+                res = self.bridge.call(
+                    "get_preview_candles", start_time, int(strike_ce), int(strike_pe)
+                )
+                if res and res.get("success"):
+                    self._preview_ce_candle = res.get("ce_candle", {})
+                    self._preview_pe_candle = res.get("pe_candle", {})
+                    self._apply_preview_candles()
+                else:
+                    self._preview_ce_candle = {}
+                    self._preview_pe_candle = {}
+                    self._apply_preview_candles()
+            except Exception:
+                self._preview_ce_candle = {}
+                self._preview_pe_candle = {}
+                self._apply_preview_candles()
+
+        threading.Thread(target=_do_fetch, daemon=True).start()
+
+    def _apply_preview_candles(self):
+        """Update CE/PE candle labels with preview data (called from thread via direct set)."""
+
+        def fmt_opt_candle(c):
+            if not c:
+                return "—"
+            t = c.get("open_time", "")
+            h = c.get("high", 0)
+            l = c.get("low", 0)
+            sz = h - l
+            if t:
+                return f"{t}  H:{h:.0f} L:{l:.0f} Sz:{sz:.0f}"
+            return f"H:{h:.0f} L:{l:.0f} Sz:{sz:.0f}"
+
+        ce_text = fmt_opt_candle(self._preview_ce_candle)
+        pe_text = fmt_opt_candle(self._preview_pe_candle)
+
+        # Update labels safely by emitting a signal to the GUI thread
+        self.sig_preview_ready.emit(ce_text, pe_text)
+
+    def _set_preview_labels(self, ce_text, pe_text):
+        """Must be called from GUI thread."""
+        if self._strategy_running:
+            return  # Strategy is now running — don't overwrite live data
+
+        ce_has_data = ce_text != "—"
+        pe_has_data = pe_text != "—"
+
+        strike_ce = int(self.inp_strike_ce.text() or 0)
+        strike_pe = int(self.inp_strike_pe.text() or 0)
+
+        ce_missing = strike_ce > 0 and not ce_has_data
+        pe_missing = strike_pe > 0 and not pe_has_data
+
+        # Automatic retry logic for future/delayed candles
+        if ce_missing or pe_missing:
+            start_time = self.inp_start_time.text().strip() or "09:17"
+            parts = start_time.split(":")
+            if len(parts) == 2:
+                from datetime import datetime
+                from datetime import time as dtime
+
+                try:
+                    t = dtime(int(parts[0]), int(parts[1]))
+                    now = datetime.now()
+                    # The candle closes at start_time + 1 minute (so we can't fetch it until then)
+                    target_dt = now.replace(
+                        hour=t.hour, minute=t.minute, second=0, microsecond=0
+                    )
+                    target_dt_ts = target_dt.timestamp() + 60
+
+                    if now.timestamp() < target_dt_ts:
+                        # Time is in the future. Schedule a precise check 0.5s after the minute rolls over.
+                        delay_ms = int((target_dt_ts - now.timestamp()) * 1000) + 500
+                        self._preview_timer.start(delay_ms)
+                        self.lbl_ce_candle.setText("waiting for time...")
+                        self.lbl_pe_candle.setText("waiting for time...")
+                        return
+                    elif self._preview_retry_count < 10:
+                        # Time has passed but broker REST API hasn't updated yet. Retry at 0.5s intervals.
+                        self._preview_retry_count += 1
+                        self._preview_timer.start(500)
+                        self.lbl_ce_candle.setText(
+                            f"retrying... ({self._preview_retry_count}/10)"
+                        )
+                        self.lbl_pe_candle.setText(
+                            f"retrying... ({self._preview_retry_count}/10)"
+                        )
+                        return
+                except Exception:
+                    pass
+
+        self.lbl_ce_candle.setText(ce_text)
+        self.lbl_pe_candle.setText(pe_text)
+
+
     def set_lot_size(self, size):
         if size > 0 and size != self.lot_size:
             try:
@@ -1067,9 +1200,6 @@ class StrategyPanel(QFrame):
                 self._push_config()
             except Exception:
                 self.lot_size = size
-
-    def on_oi_toggled(self, checked):
-        self.bridge.notify("oi_toggle", checked)
 
     def on_start_clicked(self):
         try:
@@ -1214,15 +1344,6 @@ class StrategyPanel(QFrame):
         is_suppressed = (safety_state is not None) and (not setup_signal)
 
         if not is_suppressed:
-            # Trigger candle (nifty breakout candle)
-            tc = data.get("trigger_candle", {})
-            if tc:
-                time_str = tc.get("open_time", "")
-                self.lbl_trig_candle.setText(
-                    f"{time_str} H:{tc.get('high', 0):.0f} L:{tc.get('low', 0):.0f}"
-                )
-            else:
-                self.lbl_trig_candle.setText("—")
 
             self.lbl_setup.setText(setup_signal or "—")
 
@@ -1670,6 +1791,8 @@ class MainWindow(QWidget):
                 self.strategy_panel.inp_strike_ce.setText(str(atm))
                 self.strategy_panel.inp_strike_pe.setText(str(atm))
                 self.strategy_panel.update_ui_strikes()
+                # Trigger candle preview in the GUI thread (QTimer.singleShot is thread-safe)
+                QTimer.singleShot(200, self.strategy_panel._fetch_candle_preview)
         except Exception:
             pass
 
@@ -1692,6 +1815,8 @@ class MainWindow(QWidget):
                         self.strategy_panel.inp_strike_ce.setText(str(atm))
                         self.strategy_panel.inp_strike_pe.setText(str(atm))
                         self.strategy_panel.update_ui_strikes()
+                        # Auto-trigger candle preview after strikes are set
+                        self.strategy_panel._fetch_candle_preview()
                 except Exception:
                     pass
 
@@ -1726,6 +1851,10 @@ class MainWindow(QWidget):
                         self.strategy_panel.inp_strike_ce.setText(str(atm))
                         self.strategy_panel.inp_strike_pe.setText(str(atm))
                         self.strategy_panel.update_ui_strikes()
+                        # Fetch preview once on the first market-tick ATM fill
+                        if not getattr(self, "_preview_done_on_mkt", False):
+                            self._preview_done_on_mkt = True
+                            self.strategy_panel._fetch_candle_preview()
             except Exception:
                 pass
 

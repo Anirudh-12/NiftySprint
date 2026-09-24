@@ -121,6 +121,10 @@ class NiftyOneMinStrategy:
         self.running_active_trade_candle = None
         self.last_active_trade_candle_ts = 0
 
+        # Injected reference data
+        self.injected_ref_ce = {}
+        self.injected_ref_pe = {}
+
         # --- Asyncio event loop for non-blocking candle replacement ---
         self._asyncio_loop = asyncio.new_event_loop()
         self._asyncio_thread = threading.Thread(
@@ -150,6 +154,25 @@ class NiftyOneMinStrategy:
             except Exception:
                 pass
 
+    # =========================================================================
+    # PREVIEW CANDLE FETCH (works while IDLE, no state side-effects)
+    # =========================================================================
+
+    def inject_preview_candles(self, ce_dict, pe_dict):
+        """
+        Inject pre-fetched reference candles directly from the backend.
+        This allows the strategy to use them immediately upon starting without
+        waiting for the historical async fetcher to finish.
+        """
+        with self.lock:
+            self.injected_ref_ce = dict(ce_dict) if ce_dict else {}
+            self.injected_ref_pe = dict(pe_dict) if pe_dict else {}
+            # Update the reference timestamp if not already set by ticking
+            if not self.ref_candle_ts:
+                if self.injected_ref_ce and "time" in self.injected_ref_ce:
+                    self.ref_candle_ts = self.injected_ref_ce["time"]
+                elif self.injected_ref_pe and "time" in self.injected_ref_pe:
+                    self.ref_candle_ts = self.injected_ref_pe["time"]
     # =========================================================================
     # CONFIGURE & START/STOP
     # =========================================================================
@@ -758,12 +781,14 @@ class NiftyOneMinStrategy:
             return
         ts = self._snap_1min(now)
         if self.running_opt_candle[opt_type] is None:
+            is_late = (now.timestamp() - ts) > 5.0
             self.running_opt_candle[opt_type] = {
                 "time": ts,
                 "open": ltp,
                 "high": ltp,
                 "low": ltp,
                 "close": ltp,
+                "incomplete": is_late,
             }
             self.last_opt_candle_ts[opt_type] = ts
         elif ts > self.last_opt_candle_ts[opt_type]:
@@ -778,6 +803,7 @@ class NiftyOneMinStrategy:
                 "high": ltp,
                 "low": ltp,
                 "close": ltp,
+                "incomplete": False,
             }
             self.last_opt_candle_ts[opt_type] = ts
         else:
@@ -980,18 +1006,34 @@ class NiftyOneMinStrategy:
             self.ref_candle_confirmed_at = datetime.now().timestamp()
         self._notify()
 
-    def _get_option_reference_candle(self, opt_type):
+    def _get_option_reference_candle(self, opt_type, strict=True):
         """Returns the option candle coincident with the start-time reference candle."""
         if not self.ref_candle_ts:
             return None
 
+        # 1. Check native strategy historical/ticking cache
         opt_history = self.option_candles.get(opt_type, {})
         c = opt_history.get(self.ref_candle_ts)
-        if not c and self.running_opt_candle.get(opt_type):
+        if c:
+            if strict and c.get("incomplete"):
+                return None
+            return c
+            
+        # 2. Check running live candle
+        if self.running_opt_candle.get(opt_type):
             rc = self.running_opt_candle[opt_type]
             if rc.get("time") == self.ref_candle_ts:
-                c = rc
-        return c
+                if strict and rc.get("incomplete"):
+                    return None
+                return rc
+                
+        # 3. Check injected preview data (fallback if strategy historical replay hasn't finished yet)
+        if opt_type == "CE" and getattr(self, "injected_ref_ce", {}).get("time") == self.ref_candle_ts:
+            return self.injected_ref_ce
+        if opt_type == "PE" and getattr(self, "injected_ref_pe", {}).get("time") == self.ref_candle_ts:
+            return self.injected_ref_pe
+            
+        return None
 
     # =========================================================================
     # BREAKOUT DETECTION (CROSSING & OPPOSITE IN-TRADE CHECK)
@@ -1027,15 +1069,12 @@ class NiftyOneMinStrategy:
 
                     if not getattr(self, "ce_scan_active", False):
                         if ce_ltp > threshold:
-                            gap = ce_ltp - threshold
-                            # Measure elapsed from candle CLOSE time (open_ts + 60s), not from REST confirm
-                            candle_close_time = self.ref_candle_ts + 60
-                            secs_since_candle_close = datetime.now().timestamp() - candle_close_time
-                            if secs_since_candle_close <= 3.0 and gap < 2.0:
-                                # Grace window: price crossed just as candle finished, REST lag hid it
+                            prev_ltp = self.prev_opt_ltp.get("CE", 0.0)
+                            
+                            if prev_ltp > 0 and prev_ltp <= threshold:
                                 print(
-                                    f"[GRACE_ENTRY] CE LTP {ce_ltp:.2f} is {gap:.2f}pt above threshold "
-                                    f"({secs_since_candle_close:.1f}s since candle close) — entering instead of discarding."
+                                    f"[ENTRY] Caught initial CE crossover on first scan! CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})\n"
+                                    f"        Ref Candle: {ref_ce}"
                                 )
                                 self.ce_scan_active = True
                                 self.active_opt_strike = self.strike_ce
@@ -1045,11 +1084,34 @@ class NiftyOneMinStrategy:
                                     self._exit_all("FLIP_TO_NEW_SETUP")
                                 self._enter_trade("CE", self.reference_candle_fut)
                                 return
+                            elif prev_ltp > 0:
+                                gap = ce_ltp - threshold
+                                if gap < 1.0:
+                                    print(
+                                        f"[GRACE_ENTRY] Missed exact CE cross, but gap is {gap:.2f}pt (< 1). Entering instead of discarding. (Prev: {prev_ltp:.2f})\n"
+                                        f"             CE LTP: {ce_ltp:.2f}, Ref High: {ref_high:.2f}, Buffer: {self.break_buffer}\n"
+                                        f"             Ref Candle: {ref_ce}"
+                                    )
+                                    self.ce_scan_active = True
+                                    self.active_opt_strike = self.strike_ce
+                                    self.active_opt_type = "CE"
+                                    self.opt_ltp = ce_ltp
+                                    if in_trade:
+                                        self._exit_all("FLIP_TO_NEW_SETUP")
+                                    self._enter_trade("CE", self.reference_candle_fut)
+                                    return
+                                else:
+                                    print(
+                                        f"[FILTER] CE setup already triggered and ran away! Discarding setup. "
+                                        f"CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} "
+                                        f"(gap={gap:.2f}pt, >= 1.0pt) (Prev: {prev_ltp:.2f})"
+                                    )
+                                    self.ce_disabled = True
+                                    return
                             else:
                                 print(
-                                    f"[FILTER] CE setup already triggered! Discarding setup. "
-                                    f"CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} "
-                                    f"(gap={gap:.2f}pt, {secs_since_candle_close:.1f}s since candle close)"
+                                    f"[FILTER] CE LTP already above threshold on first tick (Prev LTP=0). Discarding to prevent false breakout from data lag.\n"
+                                    f"             CE LTP: {ce_ltp:.2f}, Ref High: {ref_high:.2f}, Buffer: {self.break_buffer}"
                                 )
                                 self.ce_disabled = True
                                 return
@@ -1059,7 +1121,8 @@ class NiftyOneMinStrategy:
                     prev_ltp = self.prev_opt_ltp.get("CE", 0.0)
                     if ce_ltp > threshold and prev_ltp <= threshold:
                         print(
-                            f"[ENTRY] LONG CE option crossover breakout! CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})"
+                            f"[ENTRY] LONG CE option crossover breakout! CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})\n"
+                            f"        Ref Candle: {ref_ce}"
                         )
                         if in_trade:
                             print(
@@ -1083,15 +1146,12 @@ class NiftyOneMinStrategy:
 
                     if not getattr(self, "pe_scan_active", False):
                         if pe_ltp > threshold:
-                            gap = pe_ltp - threshold
-                            # Measure elapsed from candle CLOSE time (open_ts + 60s), not from REST confirm
-                            candle_close_time = self.ref_candle_ts + 60
-                            secs_since_candle_close = datetime.now().timestamp() - candle_close_time
-                            if secs_since_candle_close <= 3.0 and gap < 2.0:
-                                # Grace window: price crossed just as candle finished, REST lag hid it
+                            prev_ltp = self.prev_opt_ltp.get("PE", 0.0)
+                            
+                            if prev_ltp > 0 and prev_ltp <= threshold:
                                 print(
-                                    f"[GRACE_ENTRY] PE LTP {pe_ltp:.2f} is {gap:.2f}pt above threshold "
-                                    f"({secs_since_candle_close:.1f}s since candle close) — entering instead of discarding."
+                                    f"[ENTRY] Caught initial PE crossover on first scan! PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})\n"
+                                    f"        Ref Candle: {ref_pe}"
                                 )
                                 self.pe_scan_active = True
                                 self.active_opt_strike = self.strike_pe
@@ -1101,11 +1161,34 @@ class NiftyOneMinStrategy:
                                     self._exit_all("FLIP_TO_NEW_SETUP")
                                 self._enter_trade("PE", self.reference_candle_fut)
                                 return
+                            elif prev_ltp > 0:
+                                gap = pe_ltp - threshold
+                                if gap < 1.0:
+                                    print(
+                                        f"[GRACE_ENTRY] Missed exact PE cross, but gap is {gap:.2f}pt (< 1). Entering instead of discarding. (Prev: {prev_ltp:.2f})\n"
+                                        f"             PE LTP: {pe_ltp:.2f}, Ref High: {ref_high:.2f}, Buffer: {self.break_buffer}\n"
+                                        f"             Ref Candle: {ref_pe}"
+                                    )
+                                    self.pe_scan_active = True
+                                    self.active_opt_strike = self.strike_pe
+                                    self.active_opt_type = "PE"
+                                    self.opt_ltp = pe_ltp
+                                    if in_trade:
+                                        self._exit_all("FLIP_TO_NEW_SETUP")
+                                    self._enter_trade("PE", self.reference_candle_fut)
+                                    return
+                                else:
+                                    print(
+                                        f"[FILTER] PE setup already triggered and ran away! Discarding setup. "
+                                        f"PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} "
+                                        f"(gap={gap:.2f}pt, >= 1.0pt) (Prev: {prev_ltp:.2f})"
+                                    )
+                                    self.pe_disabled = True
+                                    return
                             else:
                                 print(
-                                    f"[FILTER] PE setup already triggered! Discarding setup. "
-                                    f"PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} "
-                                    f"(gap={gap:.2f}pt, {secs_since_candle_close:.1f}s since candle close)"
+                                    f"[FILTER] PE LTP already above threshold on first tick (Prev LTP=0). Discarding to prevent false breakout from data lag.\n"
+                                    f"             PE LTP: {pe_ltp:.2f}, Ref High: {ref_high:.2f}, Buffer: {self.break_buffer}"
                                 )
                                 self.pe_disabled = True
                                 return
@@ -1115,7 +1198,8 @@ class NiftyOneMinStrategy:
                     prev_ltp = self.prev_opt_ltp.get("PE", 0.0)
                     if pe_ltp > threshold and prev_ltp <= threshold:
                         print(
-                            f"[ENTRY] SHORT PE option crossover breakout! PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})"
+                            f"[ENTRY] SHORT PE option crossover breakout! PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} (Prev: {prev_ltp:.2f})\n"
+                            f"        Ref Candle: {ref_pe}"
                         )
                         if in_trade:
                             print(
@@ -1364,27 +1448,24 @@ class NiftyOneMinStrategy:
             else:
                 setup_signal = None
 
-            tc = self.reference_candle_fut or self.trigger_candle
-            tc_ts = ""
-            if tc:
-                try:
-                    tc_ts = datetime.fromtimestamp(tc.get("time", 0)).strftime("%H:%M")
-                except Exception:
-                    tc_ts = ""
-
             def get_opt_candle_dict(opt_type):
-                c = self._get_option_reference_candle(opt_type)
+                c = self._get_option_reference_candle(opt_type, strict=False)
                 if c:
-                    try:
-                        ts_str = datetime.fromtimestamp(c.get("time", 0)).strftime(
-                            "%H:%M"
-                        )
-                    except Exception:
-                        ts_str = ""
+                    # If it's the injected dict, it might already have open_time and size
+                    ts_str = c.get("open_time", "")
+                    if not ts_str:
+                        try:
+                            ts_str = datetime.fromtimestamp(c.get("time", 0)).strftime("%H:%M")
+                        except Exception:
+                            ts_str = ""
+                    h = c.get("high", 0)
+                    l = c.get("low", 0)
+                    sz = c.get("size", h - l)
                     return {
                         "open_time": ts_str,
-                        "high": c.get("high", 0),
-                        "low": c.get("low", 0),
+                        "high": h,
+                        "low": l,
+                        "size": round(sz, 2),
                     }
                 return {}
 
@@ -1405,16 +1486,6 @@ class NiftyOneMinStrategy:
             data = {
                 "state": self.state,
                 "setup_signal": setup_signal,
-                "trigger_candle": {
-                    "open_time": tc_ts,
-                    "high": tc.get("high", 0) if tc else 0,
-                    "low": tc.get("low", 0) if tc else 0,
-                    "size": round((tc.get("high", 0) - tc.get("low", 0)), 2)
-                    if tc
-                    else 0,
-                }
-                if tc
-                else {},
                 "ce_candle": ce_candle_data,
                 "pe_candle": pe_candle_data,
                 "entry_price_opt": self.entry_price_opt,
