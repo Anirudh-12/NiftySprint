@@ -561,28 +561,6 @@ class StrategyPanel(QFrame):
         pm_right_layout.addWidget(self.lbl_pm_range)
         grid_params.addLayout(pm_right_layout, 0, 8, 1, 4)
 
-        # Row 1: TMIN, TMAX, BUF
-        lbl_tmin, self.inp_trig_min, b_tmin_p, b_tmin_m = mk_param(
-            "TMIN", "inp_trig_min", 25, step=1, width=55
-        )
-        lbl_tmax, self.inp_trig_max, b_tmax_p, b_tmax_m = mk_param(
-            "TMAX", "inp_trig_max", 45, step=1, width=55
-        )
-        lbl_buf, self.inp_break_buf, b_buf_p, b_buf_m = mk_param(
-            "BUF", "inp_break_buf", 2, step=1, width=55
-        )
-
-        for lbl, inp, bp, bm, col in [
-            (lbl_tmin, self.inp_trig_min, b_tmin_p, b_tmin_m, 0),
-            (lbl_tmax, self.inp_trig_max, b_tmax_p, b_tmax_m, 4),
-            (lbl_buf, self.inp_break_buf, b_buf_p, b_buf_m, 8),
-        ]:
-            grid_params.addWidget(lbl, 1, col)
-            grid_params.addWidget(inp, 1, col + 1)
-            grid_params.addWidget(bp, 1, col + 2)
-            grid_params.addWidget(bm, 1, col + 3)
-            inp.editingFinished.connect(self._push_config)
-
         # Row 2: T1%, T2%, T3x
         lbl_t1p, self.inp_t1_pct, b_t1p_p, b_t1p_m = mk_param(
             "T1%",
@@ -722,7 +700,6 @@ class StrategyPanel(QFrame):
         sf_layout.addWidget(stat_lbl("SETUP"), 0, 0)
         self.lbl_setup = stat_val(COLOR_YELLOW)
         sf_layout.addWidget(self.lbl_setup, 0, 1)
-
 
         sf_layout.addWidget(stat_lbl("OPT SZ"), 0, 4)
         self.lbl_opt_size = stat_val(COLOR_CYAN)
@@ -920,9 +897,6 @@ class StrategyPanel(QFrame):
 
         defaults = {
             "pm_limit": self.inp_pm_limit.text(),
-            "trig_min": self.inp_trig_min.text(),
-            "trig_max": self.inp_trig_max.text(),
-            "break_buf": self.inp_break_buf.text(),
             "t1_pct": self.inp_t1_pct.text(),
             "t2_pct": self.inp_t2_pct.text(),
             "t3_mult": self.inp_t3_mult.text(),
@@ -948,9 +922,6 @@ class StrategyPanel(QFrame):
                 with open("ui_defaults.json", "r") as f:
                     defaults = json.load(f)
                 self.inp_pm_limit.setText(str(defaults.get("pm_limit", "100")))
-                self.inp_trig_min.setText(str(defaults.get("trig_min", "25")))
-                self.inp_trig_max.setText(str(defaults.get("trig_max", "45")))
-                self.inp_break_buf.setText(str(defaults.get("break_buf", "2")))
                 self.inp_t1_pct.setText(str(defaults.get("t1_pct", "0.5")))
                 self.inp_t2_pct.setText(str(defaults.get("t2_pct", "1.0")))
                 self.inp_t3_mult.setText(str(defaults.get("t3_mult", "2")))
@@ -972,8 +943,7 @@ class StrategyPanel(QFrame):
     def step_qty(self, inp, direction):
         try:
             val = int(inp.text() or 0) + direction * self.lot_size
-            if val < 0:
-                val = 0
+            val = max(val, 0)
             inp.setText(str(val))
             self._push_config()
         except Exception:
@@ -1031,9 +1001,9 @@ class StrategyPanel(QFrame):
             t2q = int(self.inp_t2_qty.text() or 0)
             sce = int(self.inp_strike_ce.text() or 0)
             spe = int(self.inp_strike_pe.text() or 0)
-            tmin = int(self.inp_trig_min.text() or 25)
-            tmax = int(self.inp_trig_max.text() or 45)
-            buf = float(self.inp_break_buf.text() or 2)
+            tmin = 25
+            tmax = 45
+            buf = 0.0
             t1p = float(self.inp_t1_pct.text() or 0.5)
             t2p = float(self.inp_t2_pct.text() or 1.0)
             t3m = int(self.inp_t3_mult.text() or 2)
@@ -1089,7 +1059,6 @@ class StrategyPanel(QFrame):
         if not is_retry:
             self.lbl_ce_candle.setText("fetching...")
             self.lbl_pe_candle.setText("fetching...")
-
 
         def _do_fetch():
             try:
@@ -1186,7 +1155,6 @@ class StrategyPanel(QFrame):
         self.lbl_ce_candle.setText(ce_text)
         self.lbl_pe_candle.setText(pe_text)
 
-
     def set_lot_size(self, size):
         if size > 0 and size != self.lot_size:
             try:
@@ -1208,9 +1176,9 @@ class StrategyPanel(QFrame):
             t2q = int(self.inp_t2_qty.text() or 0)
             sce = int(self.inp_strike_ce.text() or 0)
             spe = int(self.inp_strike_pe.text() or 0)
-            tmin = int(self.inp_trig_min.text() or 25)
-            tmax = int(self.inp_trig_max.text() or 45)
-            buf = float(self.inp_break_buf.text() or 2)
+            tmin = 25
+            tmax = 45
+            buf = 0.0
             t1p = float(self.inp_t1_pct.text() or 0.5)
             t2p = float(self.inp_t2_pct.text() or 1.0)
             t3m = int(self.inp_t3_mult.text() or 2)
@@ -1344,7 +1312,6 @@ class StrategyPanel(QFrame):
         is_suppressed = (safety_state is not None) and (not setup_signal)
 
         if not is_suppressed:
-
             self.lbl_setup.setText(setup_signal or "—")
 
             # CE / PE candle display
