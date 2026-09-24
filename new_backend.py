@@ -46,7 +46,8 @@ def _get_app_base_dir() -> str:
         # Running as a regular Python script
         return os.path.dirname(os.path.abspath(__file__))
 
-_path_hash = hashlib.sha256(_get_app_base_dir().encode()).hexdigest()[:12]
+_app_dir_name = os.path.basename(_get_app_base_dir())
+_path_hash = hashlib.sha256(_app_dir_name.encode()).hexdigest()[:12]
 KEYRING_SERVICE = f"FlattradeApp_{_path_hash}"
 # ──────────────────────────────────────────────────────────────────────────
 

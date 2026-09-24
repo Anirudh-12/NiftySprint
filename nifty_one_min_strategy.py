@@ -84,6 +84,12 @@ class NiftyOneMinStrategy:
         self.reference_candle_pe = None
         self.ref_candle_ts = 0
         self.trigger_candle = None
+        # True once REST confirms reference candle OHLC; blocks breakout scanning until then
+        self.ref_candle_confirmed = True
+        # Unix timestamp when ref_candle_confirmed became True (used for grace window)
+        self.ref_candle_confirmed_at = 0.0
+        # Set True during historical replay so REST-sourced candles are trusted immediately
+        self._replaying_history = False
 
         # --- Filters State (OI and price filters removed) ---
 
@@ -97,6 +103,7 @@ class NiftyOneMinStrategy:
         # --- Trade / Position tracking ---
         self.entry_price_opt = 0.0
         self.opt_candle_size = 0.0
+        self.opt_candle_low = 0.0  # SL anchor = low of option reference candle
         self.option_high_since_entry = 0.0
         self.t1_target = 0.0
         self.t2_target = 0.0
@@ -235,6 +242,9 @@ class NiftyOneMinStrategy:
             self.reference_candle_pe = None
             self.ref_candle_ts = 0
             self.trigger_candle = None
+            self.ref_candle_confirmed = True
+            self.ref_candle_confirmed_at = 0.0
+            self._replaying_history = False
 
             self.ce_disabled = False
             self.pe_disabled = False
@@ -315,6 +325,15 @@ class NiftyOneMinStrategy:
             tc = self.reference_candle_fut or self.trigger_candle
             if tc is None and self.futures_candles:
                 tc = self.futures_candles[-1]
+
+            # Mirror what _check_breakout does before calling _enter_trade.
+            # Without these, active_opt_strike stays 0 → opt_ltp = 0 every tick
+            # → _check_trade bails immediately → no TG/SL checks, no exit on stop.
+            strike = self.strike_ce if direction == "CE" else self.strike_pe
+            self.active_opt_strike = strike
+            self.active_opt_type = direction
+            self.opt_ltp = self.option_handler.get_option_ltp(strike, direction)
+
             self._enter_trade(direction, tc or {}, force=True)
 
     # =========================================================================
@@ -325,7 +344,12 @@ class NiftyOneMinStrategy:
         if not self.is_running or not index_ltp:
             return
         try:
-            now = datetime.now()
+            # Use server-clock-adjusted time if available (corrects PC clock drift
+            # vs exchange server; important since Flattrade WS ticks carry no LTT).
+            if hasattr(self.api, "get_adjusted_now"):
+                now = self.api.get_adjusted_now()
+            else:
+                now = datetime.now()
             ltp = float(index_ltp)
             self.index_ltp = ltp
 
@@ -490,25 +514,31 @@ class NiftyOneMinStrategy:
                 return
 
             candles_sorted = sorted(candles, key=lambda x: x.timestamp)
-            for c in candles_sorted:
-                c_ts = c.timestamp
-                if c_ts >= current_block_ts:
-                    continue
+            # Mark as history replay: candles from REST are already accurate,
+            # so reference candle set during this loop is trusted immediately.
+            self._replaying_history = True
+            try:
+                for c in candles_sorted:
+                    c_ts = c.timestamp
+                    if c_ts >= current_block_ts:
+                        continue
 
-                hi = c.high
-                lo = c.low
-                cl = c.close
+                    hi = c.high
+                    lo = c.low
+                    cl = c.close
 
-                candle_obj = {
-                    "time": c_ts,
-                    "open": c.open,
-                    "high": hi,
-                    "low": lo,
-                    "close": cl,
-                    "size": hi - lo,
-                }
-                self.futures_candles.append(candle_obj)
-                self._on_candle_close(candle_obj, "futures")
+                    candle_obj = {
+                        "time": c_ts,
+                        "open": c.open,
+                        "high": hi,
+                        "low": lo,
+                        "close": cl,
+                        "size": hi - lo,
+                    }
+                    self.futures_candles.append(candle_obj)
+                    self._on_candle_close(candle_obj, "futures")
+            finally:
+                self._replaying_history = False
 
             if self.strike_ce > 0:
                 self._fetch_historical_option_candles("CE", self.strike_ce)
@@ -704,19 +734,8 @@ class NiftyOneMinStrategy:
             completed = dict(self.running_fut_candle)
             completed["size"] = completed["high"] - completed["low"]
             self.futures_candles.append(completed)
-
-            nifty_token = self.option_handler.index_tokens.get("NIFTY", {}).get("token")
-            exchange = self.option_handler.index_tokens.get("NIFTY", {}).get(
-                "exchange", "NFO"
-            )
-            if nifty_token and exchange:
-                self._async_replace_candle(
-                    exchange,
-                    nifty_token,
-                    self.last_fut_candle_ts,
-                    completed,
-                    label="futures",
-                )
+            # Note: _async_replace_candle removed for live futures candles.
+            # Reference candle accuracy is handled by _fetch_and_confirm_reference_candle.
 
             self.running_fut_candle = {
                 "time": ts,
@@ -751,19 +770,7 @@ class NiftyOneMinStrategy:
             completed = dict(self.running_opt_candle[opt_type])
             completed["size"] = completed["high"] - completed["low"]
             self.option_candles[opt_type][self.last_opt_candle_ts[opt_type]] = completed
-            strike = self.strike_ce if opt_type == "CE" else self.strike_pe
-            if strike > 0:
-                token_info = self.option_handler._get_option_token(
-                    "NIFTY", opt_type, strike
-                )
-                if token_info:
-                    self._async_replace_candle(
-                        token_info.get("exchange", "NFO"),
-                        token_info.get("token"),
-                        self.last_opt_candle_ts[opt_type],
-                        completed,
-                        label=f"{opt_type} Option",
-                    )
+            # Note: _async_replace_candle removed for live option scan candles to reduce API load.
             self._on_candle_close(completed, opt_type)
             self.running_opt_candle[opt_type] = {
                 "time": ts,
@@ -871,11 +878,107 @@ class NiftyOneMinStrategy:
                     f"[REFERENCE] Start time candle ({self.start_time_str}) set as REFERENCE candle!"
                 )
                 print(
-                    f"[REFERENCE] Futures High: {fut_candle['high']}, Low: {fut_candle['low']}"
+                    f"[REFERENCE] Futures High (tick): {fut_candle['high']}, Low (tick): {fut_candle['low']}"
                 )
+                if self._replaying_history:
+                    # Candle came from REST historical data — already accurate, no need to re-fetch
+                    self.ref_candle_confirmed = True
+                    self.ref_candle_confirmed_at = datetime.now().timestamp()
+                    log_debug(
+                        "[REF_CONFIRM] Reference candle from historical REST data — confirmed immediately."
+                    )
+                else:
+                    # Candle came from live ticks (snapshot, ~2pt inaccuracy) — block scanning
+                    # until we fetch the official OHLC from REST
+                    self.ref_candle_confirmed = False
+                    log_debug(
+                        "[REF_CONFIRM] Reference candle from live ticks — awaiting REST confirmation before scanning."
+                    )
+                    threading.Thread(
+                        target=self._fetch_and_confirm_reference_candle,
+                        args=(fut_candle, fut_candle["time"]),
+                        daemon=True,
+                    ).start()
                 self._notify()
         except Exception:
             pass
+
+    def _fetch_and_confirm_reference_candle(self, candle_dict, target_ts):
+        """
+        Fetches the official REST OHLC for the reference candle and updates it in-place.
+        Breakout scanning is blocked (ref_candle_confirmed=False) until this succeeds.
+        The candle just closed, so we give the exchange a few seconds to publish it,
+        then retry a small number of times — much cheaper than _async_replace_candle.
+        """
+        import time
+
+        ts_str = datetime.fromtimestamp(target_ts).strftime("%H:%M:%S")
+        nifty_token = self.option_handler.index_tokens.get("NIFTY", {}).get("token")
+        exchange = self.option_handler.index_tokens.get("NIFTY", {}).get(
+            "exchange", "NFO"
+        )
+
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            # First attempt: wait 3s (exchange usually publishes within 2-3s)
+            # Subsequent: wait 2s each
+            wait_sec = 3 if attempt == 0 else 2
+            time.sleep(wait_sec)
+            try:
+                # Bail out if the strategy was stopped or ref candle changed
+                if not self.is_running or self.ref_candle_ts != target_ts:
+                    return
+                candles = self.api.get_historical_data(
+                    exchange=exchange,
+                    token=nifty_token,
+                    start_time=target_ts,
+                    end_time=target_ts + 120,
+                    interval=1,
+                )
+                for c in candles or []:
+                    if c.timestamp == target_ts:
+                        with self.lock:
+                            if self.ref_candle_ts != target_ts:
+                                return  # Ref candle changed while we were fetching
+                            old_h = candle_dict.get("high", 0)
+                            candle_dict["open"] = c.open
+                            candle_dict["high"] = c.high
+                            candle_dict["low"] = c.low
+                            candle_dict["close"] = c.close
+                            candle_dict["size"] = c.high - c.low
+                            self.ref_candle_confirmed = True
+                            self.ref_candle_confirmed_at = datetime.now().timestamp()  # noqa: DTZ005
+                        # Use get_server_clock_offset() — _server_clock_offset lives on the
+                        # inner NorenWebApi, not on FlatTradeBroker, so getattr on self.api
+                        # would always return None.
+                        if hasattr(self.api, "get_server_clock_offset"):
+                            clock_offset = self.api.get_server_clock_offset()
+                            offset_str = f", clock_offset={clock_offset:+.2f}s"
+                        else:
+                            offset_str = ""
+                        msg = (
+                            f"[REF_CONFIRM] Reference candle REST-confirmed @ {ts_str} "
+                            f"— H:{c.high} L:{c.low} (tick H was {old_h:.2f}) "
+                            f"attempt {attempt + 1}/{max_attempts}{offset_str}"
+                        )
+                        print(msg)
+                        log_debug(msg)
+                        self._notify()
+                        return
+            except Exception as e:
+                log_debug(f"[REF_CONFIRM] Attempt {attempt + 1} error: {e}")
+
+        # All attempts exhausted — fall back to tick-built candle so trading isn't blocked forever
+        warn = (
+            f"[REF_CONFIRM] WARNING: Could not REST-confirm reference candle @ {ts_str} "
+            f"after {max_attempts} attempts. Falling back to tick-built OHLC."
+        )
+        print(warn)
+        log_debug(warn)
+        with self.lock:
+            self.ref_candle_confirmed = True
+            self.ref_candle_confirmed_at = datetime.now().timestamp()
+        self._notify()
 
     def _get_option_reference_candle(self, opt_type):
         """Returns the option candle coincident with the start-time reference candle."""
@@ -906,6 +1009,11 @@ class NiftyOneMinStrategy:
         if self.reference_candle_fut is None:
             return
 
+        # Block scanning until the REST-confirmed reference candle OHLC is ready.
+        # This prevents trading on the inaccurate tick-built high/low.
+        if not getattr(self, "ref_candle_confirmed", True):
+            return
+
         in_trade = self.state in ("IN_TRADE", "TRAILING")
 
         # Check LONG (Buy CE)
@@ -919,11 +1027,32 @@ class NiftyOneMinStrategy:
 
                     if not getattr(self, "ce_scan_active", False):
                         if ce_ltp > threshold:
-                            print(
-                                f"[FILTER] CE setup already triggered! Discarding setup. CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}"
-                            )
-                            self.ce_disabled = True
-                            return
+                            gap = ce_ltp - threshold
+                            # Measure elapsed from candle CLOSE time (open_ts + 60s), not from REST confirm
+                            candle_close_time = self.ref_candle_ts + 60
+                            secs_since_candle_close = datetime.now().timestamp() - candle_close_time
+                            if secs_since_candle_close <= 3.0 and gap < 2.0:
+                                # Grace window: price crossed just as candle finished, REST lag hid it
+                                print(
+                                    f"[GRACE_ENTRY] CE LTP {ce_ltp:.2f} is {gap:.2f}pt above threshold "
+                                    f"({secs_since_candle_close:.1f}s since candle close) — entering instead of discarding."
+                                )
+                                self.ce_scan_active = True
+                                self.active_opt_strike = self.strike_ce
+                                self.active_opt_type = "CE"
+                                self.opt_ltp = ce_ltp
+                                if in_trade:
+                                    self._exit_all("FLIP_TO_NEW_SETUP")
+                                self._enter_trade("CE", self.reference_candle_fut)
+                                return
+                            else:
+                                print(
+                                    f"[FILTER] CE setup already triggered! Discarding setup. "
+                                    f"CE LTP {ce_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} "
+                                    f"(gap={gap:.2f}pt, {secs_since_candle_close:.1f}s since candle close)"
+                                )
+                                self.ce_disabled = True
+                                return
                         else:
                             self.ce_scan_active = True
 
@@ -954,11 +1083,32 @@ class NiftyOneMinStrategy:
 
                     if not getattr(self, "pe_scan_active", False):
                         if pe_ltp > threshold:
-                            print(
-                                f"[FILTER] PE setup already triggered! Discarding setup. PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer}"
-                            )
-                            self.pe_disabled = True
-                            return
+                            gap = pe_ltp - threshold
+                            # Measure elapsed from candle CLOSE time (open_ts + 60s), not from REST confirm
+                            candle_close_time = self.ref_candle_ts + 60
+                            secs_since_candle_close = datetime.now().timestamp() - candle_close_time
+                            if secs_since_candle_close <= 3.0 and gap < 2.0:
+                                # Grace window: price crossed just as candle finished, REST lag hid it
+                                print(
+                                    f"[GRACE_ENTRY] PE LTP {pe_ltp:.2f} is {gap:.2f}pt above threshold "
+                                    f"({secs_since_candle_close:.1f}s since candle close) — entering instead of discarding."
+                                )
+                                self.pe_scan_active = True
+                                self.active_opt_strike = self.strike_pe
+                                self.active_opt_type = "PE"
+                                self.opt_ltp = pe_ltp
+                                if in_trade:
+                                    self._exit_all("FLIP_TO_NEW_SETUP")
+                                self._enter_trade("PE", self.reference_candle_fut)
+                                return
+                            else:
+                                print(
+                                    f"[FILTER] PE setup already triggered! Discarding setup. "
+                                    f"PE LTP {pe_ltp:.2f} > Ref High {ref_high:.2f} + {self.break_buffer} "
+                                    f"(gap={gap:.2f}pt, {secs_since_candle_close:.1f}s since candle close)"
+                                )
+                                self.pe_disabled = True
+                                return
                         else:
                             self.pe_scan_active = True
 
@@ -992,9 +1142,11 @@ class NiftyOneMinStrategy:
         ref_opt = self._get_option_reference_candle(opt_type)
         if ref_opt and (ref_opt.get("high", 0) - ref_opt.get("low", 0)) > 0:
             self.opt_candle_size = ref_opt["high"] - ref_opt["low"]
+            self.opt_candle_low = ref_opt["low"]  # SL = candle low
         else:
             fut_size = trigger_candle.get("high", 0) - trigger_candle.get("low", 0)
             self.opt_candle_size = fut_size
+            self.opt_candle_low = trigger_candle.get("low", 0)  # fallback: future candle low
 
         strike = self.strike_ce if opt_type == "CE" else self.strike_pe
         self.entry_price_opt = self.option_handler.get_option_ltp(strike, opt_type)
@@ -1005,9 +1157,9 @@ class NiftyOneMinStrategy:
         cs = self.opt_candle_size if self.opt_candle_size > 0 else ep * 0.1
 
         self.option_high_since_entry = ep
-        # Fixed SL before T1 = entry - candle_size (no trail before target)
-        self.current_sl = ep - cs
-        self.trailing_sl = ep - cs
+        # Fixed SL before T1 = opt candle low (not entry - candle_size)
+        self.current_sl = self.opt_candle_low
+        self.trailing_sl = self.opt_candle_low
 
         self.t1_target = ep + cs * self.t1_pct
         self.t2_target = ep + cs * self.t2_pct
@@ -1058,9 +1210,9 @@ class NiftyOneMinStrategy:
         if opt_ltp <= 0:
             return
 
-        # Fixed SL before T1. After T1 hits, trail by trail_points from max option price
+        # Fixed SL before T1 = opt candle low. After T1 hits, trail by trail_points from max option price
         if not self.t1_hit:
-            proposed_sl = self.entry_price_opt - self.opt_candle_size
+            proposed_sl = self.opt_candle_low
         else:
             proposed_sl = self.option_high_since_entry - self.trail_points
 
@@ -1179,6 +1331,7 @@ class NiftyOneMinStrategy:
     def _reset_trade_state(self):
         self.entry_price_opt = 0.0
         self.opt_candle_size = 0.0
+        self.opt_candle_low = 0.0
         self.option_high_since_entry = 0.0
         self.t1_target = 0.0
         self.t2_target = 0.0

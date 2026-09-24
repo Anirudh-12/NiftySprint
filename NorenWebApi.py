@@ -6,7 +6,9 @@ import pyotp
 import ssl
 import threading
 import urllib
-from datetime import datetime as dt
+import time
+import email.utils
+from datetime import datetime as dt, timedelta
 import websocket
 from time import sleep
 import copy
@@ -107,6 +109,9 @@ class NorenWebApi:
         self.__market_status_messages = []
         self.__exchange_messages = []
         self.__subscribed_symbols = set()
+        # Offset (seconds) = exchange_server_time - local_system_time.
+        # Updated on every REST call. Positive = our PC clock is behind the server.
+        self._server_clock_offset: float = 0.0
 
     # ---------- helpers ----------
 
@@ -1021,8 +1026,18 @@ class NorenWebApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=5)
         reportmsg(res.text)
+
+        # --- Clock sync: use the HTTP Date header to track PC-vs-server offset ---
+        try:
+            date_hdr = res.headers.get("Date") or res.headers.get("date")
+            if date_hdr:
+                server_ts = email.utils.parsedate_to_datetime(date_hdr).timestamp()
+                local_ts  = time.time()
+                self._server_clock_offset = server_ts - local_ts
+        except Exception:
+            pass
 
         resDict = json.loads(res.text)
         

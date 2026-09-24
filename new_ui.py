@@ -653,8 +653,8 @@ class StrategyPanel(QFrame):
             inp = GridValueInput(val, width=55)
             btn_p = StepperButton("+", COLOR_GREEN)
             btn_m = StepperButton("-", COLOR_RED)
-            btn_p.clicked.connect(lambda _, i=inp: self.step_time(i, 5))
-            btn_m.clicked.connect(lambda _, i=inp: self.step_time(i, -5))
+            btn_p.clicked.connect(lambda _, i=inp: self.step_time(i, 1))
+            btn_m.clicked.connect(lambda _, i=inp: self.step_time(i, -1))
             setattr(self, attr, inp)
             return lbl, inp, btn_p, btn_m
 
@@ -726,20 +726,21 @@ class StrategyPanel(QFrame):
         self.lbl_opt_size = stat_val(COLOR_CYAN)
         sf_layout.addWidget(self.lbl_opt_size, 0, 5)
 
-        # Row 1: CE CANDLE / PE CANDLE / ENTRY
+        # Row 1: CE CANDLE / PE CANDLE  (ENTRY removed — shown in positions table)
         self.lbl_ce_candle_hdr = stat_lbl("CE CANDLE", COLOR_GREEN)
         sf_layout.addWidget(self.lbl_ce_candle_hdr, 1, 0)
         self.lbl_ce_candle = stat_val(COLOR_GREEN)
-        sf_layout.addWidget(self.lbl_ce_candle, 1, 1)
+        self.lbl_ce_candle.setMinimumWidth(130)
+        sf_layout.addWidget(self.lbl_ce_candle, 1, 1, 1, 2)  # span 2 cols for more space
 
         self.lbl_pe_candle_hdr = stat_lbl("PE CANDLE", COLOR_RED)
-        sf_layout.addWidget(self.lbl_pe_candle_hdr, 1, 2)
+        sf_layout.addWidget(self.lbl_pe_candle_hdr, 1, 3)
         self.lbl_pe_candle = stat_val(COLOR_RED)
-        sf_layout.addWidget(self.lbl_pe_candle, 1, 3)
+        self.lbl_pe_candle.setMinimumWidth(130)
+        sf_layout.addWidget(self.lbl_pe_candle, 1, 4, 1, 2)  # span 2 cols for more space
 
-        sf_layout.addWidget(stat_lbl("ENTRY"), 1, 4)
+        # Keep lbl_entry as attribute for backwards compat with update_state references
         self.lbl_entry = stat_val(COLOR_BLUE)
-        sf_layout.addWidget(self.lbl_entry, 1, 5)
 
         # Row 2: T1 / T2 / SL
         sf_layout.addWidget(stat_lbl("T1"), 2, 0)
@@ -813,23 +814,22 @@ class StrategyPanel(QFrame):
 
         # Grid columns:  0=CE lbl  1=CE inp  2=CE+  3=CE-  4=CE price  5=PE lbl  6=PE inp  7=PE+  8=PE-  9=PE price
         # Row 0: strike inputs
-        stk_grid.addWidget(lbl_ce,               0, 0)
-        stk_grid.addWidget(self.inp_strike_ce,   0, 1)
-        stk_grid.addWidget(btn_cep,              0, 2)
-        stk_grid.addWidget(btn_cem,              0, 3)
-        stk_grid.addWidget(self.lbl_ce_price,    0, 4)
-        stk_grid.addWidget(lbl_pe,               0, 5)
-        stk_grid.addWidget(self.inp_strike_pe,   0, 6)
-        stk_grid.addWidget(btn_pep,              0, 7)
-        stk_grid.addWidget(btn_pem,              0, 8)
-        stk_grid.addWidget(self.lbl_pe_price,    0, 9)
+        stk_grid.addWidget(lbl_ce, 0, 0)
+        stk_grid.addWidget(self.inp_strike_ce, 0, 1)
+        stk_grid.addWidget(btn_cep, 0, 2)
+        stk_grid.addWidget(btn_cem, 0, 3)
+        stk_grid.addWidget(self.lbl_ce_price, 0, 4)
+        stk_grid.addWidget(lbl_pe, 0, 5)
+        stk_grid.addWidget(self.inp_strike_pe, 0, 6)
+        stk_grid.addWidget(btn_pep, 0, 7)
+        stk_grid.addWidget(btn_pem, 0, 8)
+        stk_grid.addWidget(self.lbl_pe_price, 0, 9)
 
         # Row 1: Buy CE spans cols 1-3 (inp/+/-), Buy PE spans cols 6-8 (inp/+/-)
-        stk_grid.addWidget(self.btn_force_ce,    1, 1, 1, 3)
-        stk_grid.addWidget(self.btn_force_pe,    1, 6, 1, 3)
+        stk_grid.addWidget(self.btn_force_ce, 1, 1, 1, 3)
+        stk_grid.addWidget(self.btn_force_pe, 1, 6, 1, 3)
 
         main.addLayout(stk_grid)
-
 
         # ── Section F: Controls ──────────────────────────────────
         ctrl_row = QHBoxLayout()
@@ -1236,7 +1236,10 @@ class StrategyPanel(QFrame):
                 t = c.get("open_time", "")
                 h = c.get("high", 0)
                 l = c.get("low", 0)
-                return f"{t} H:{h:.0f} L:{l:.0f}" if t else f"H:{h:.0f} L:{l:.0f}"
+                sz = h - l
+                if t:
+                    return f"{t}  H:{h:.0f} L:{l:.0f} Sz:{sz:.0f}"
+                return f"H:{h:.0f} L:{l:.0f} Sz:{sz:.0f}"
 
             self.lbl_ce_candle.setText(fmt_opt_candle(ce_c))
             self.lbl_pe_candle.setText(fmt_opt_candle(pe_c))
@@ -1309,24 +1312,24 @@ class CredentialsPanel(QFrame):
 
         # Top Button Row: Copy & Paste Creds
         creds_btn_layout = QHBoxLayout()
-        
+
         self.btn_copy_creds = QPushButton("COPY CREDS")
         self.btn_copy_creds.setFixedHeight(32)
         self.btn_copy_creds.setStyleSheet(
-            f"background-color: #f59e0b; color: white; font-weight: bold;" # Amber color
+            f"background-color: #f59e0b; color: white; font-weight: bold;"  # Amber color
         )
         self.btn_copy_creds.clicked.connect(self.on_copy_creds)
-        
+
         self.btn_paste_creds = QPushButton("PASTE CREDS")
         self.btn_paste_creds.setFixedHeight(32)
         self.btn_paste_creds.setStyleSheet(
             f"background-color: {COLOR_BLUE}; color: white; font-weight: bold;"
         )
         self.btn_paste_creds.clicked.connect(self.on_paste_creds)
-        
+
         creds_btn_layout.addWidget(self.btn_copy_creds)
         creds_btn_layout.addWidget(self.btn_paste_creds)
-        
+
         # Bottom Button Row: Save & Connect
         save_btn_layout = QHBoxLayout()
 
@@ -1345,7 +1348,7 @@ class CredentialsPanel(QFrame):
 
         save_btn_layout.addWidget(self.btn_save_defaults)
         save_btn_layout.addWidget(self.btn_connect)
-        
+
         layout.addLayout(creds_btn_layout)
         layout.addLayout(save_btn_layout)
 
@@ -1367,14 +1370,23 @@ class CredentialsPanel(QFrame):
         text = clipboard.text()
         try:
             creds = json.loads(text)
-            if "user_id" in creds: self.inp_user_id.setText(creds["user_id"])
-            if "password" in creds: self.inp_password.setText(creds["password"])
-            if "factor2" in creds: self.inp_factor2.setText(creds["factor2"])
-            if "api_key" in creds: self.inp_api_key.setText(creds["api_key"])
-            if "api_secret" in creds: self.inp_api_secret.setText(creds["api_secret"])
+            if "user_id" in creds:
+                self.inp_user_id.setText(creds["user_id"])
+            if "password" in creds:
+                self.inp_password.setText(creds["password"])
+            if "factor2" in creds:
+                self.inp_factor2.setText(creds["factor2"])
+            if "api_key" in creds:
+                self.inp_api_key.setText(creds["api_key"])
+            if "api_secret" in creds:
+                self.inp_api_secret.setText(creds["api_secret"])
             QMessageBox.information(self, "Success", "Credentials pasted successfully!")
         except json.JSONDecodeError:
-            QMessageBox.warning(self, "Invalid Data", "Clipboard does not contain valid JSON credentials.")
+            QMessageBox.warning(
+                self,
+                "Invalid Data",
+                "Clipboard does not contain valid JSON credentials.",
+            )
 
     def on_connect_clicked(self):
         creds = {

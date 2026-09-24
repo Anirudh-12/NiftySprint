@@ -218,3 +218,19 @@ class FlatTradeBroker(BaseBroker):
     def subscribe_market_data(self, tokens: List[str]) -> None:
         from NorenRestApiPy.NorenApi import FeedType
         self.api.subscribe(tokens, FeedType.TOUCHLINE)
+
+    def get_adjusted_now(self):
+        """
+        Returns datetime.now() corrected by the measured PC-vs-server clock offset.
+        Flattrade WebSocket ticks carry no LTT, so we use system time for candle
+        bucketing. If the PC clock is ahead/behind the exchange by a few seconds,
+        candle boundaries will be wrong. This method compensates using the offset
+        learned from the HTTP Date header of every REST call (updated automatically).
+        """
+        from datetime import datetime, timedelta
+        offset = getattr(self.api, '_server_clock_offset', 0.0)
+        return datetime.now() + timedelta(seconds=offset)
+
+    def get_server_clock_offset(self) -> float:
+        """Returns current measured offset: server_time - local_time (seconds)."""
+        return getattr(self.api, '_server_clock_offset', 0.0)
